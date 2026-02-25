@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor — Claude Code Meta-Learning</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #666;
+      --border: #e0e0e0;
+      --accent: #2563eb;
+      --accent-bg: #eff6ff;
+      --card-bg: #fff;
+      --code-bg: #f5f5f5;
+      --radius: 6px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111;
+        --fg: #e0e0e0;
+        --muted: #999;
+        --border: #333;
+        --accent: #60a5fa;
+        --accent-bg: #1e293b;
+        --card-bg: #1a1a1a;
+        --code-bg: #222;
+      }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 1000px; margin: 0 auto; padding: 2rem;
+      background: var(--bg); color: var(--fg);
+      line-height: 1.6;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 2rem; }
+    .search-box {
+      display: flex; gap: 0.5rem; margin-bottom: 2rem;
+    }
+    .search-box input {
+      flex: 1; padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--card-bg); color: var(--fg);
+      font-size: 0.95rem;
+    }
+    .search-box button {
+      padding: 0.5rem 1.25rem;
+      background: var(--accent); color: #fff; border: none;
+      border-radius: var(--radius); cursor: pointer;
+      font-size: 0.95rem;
+    }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem; margin-bottom: 2rem;
+    }
+    .stat-card {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1rem; text-align: center;
+    }
+    .stat-card .value { font-size: 1.75rem; font-weight: 700; color: var(--accent); }
+    .stat-card .label { color: var(--muted); font-size: 0.85rem; }
+    .results { list-style: none; }
+    .results li {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1rem; margin-bottom: 0.75rem;
+    }
+    .results .meta { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.5rem; }
+    .results .snippet { font-size: 0.9rem; }
+    .results .snippet b { color: var(--accent); }
+    .placeholder { color: var(--muted); font-style: italic; margin-top: 2rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Monitor</h1>
+  <p class="subtitle">Claude Code meta-learning dashboard</p>
+
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="Search learnings..." autofocus>
+    <button onclick="doSearch()">Search</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <ul class="results" id="results"></ul>
+  <p class="placeholder" id="placeholder">Loading...</p>
+
+  <script>
+    /** Escape HTML to prevent XSS from scanned content. */
+    function esc(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) throw new Error('API not available');
+        const data = await res.json();
+        const el = document.getElementById('stats');
+        el.innerHTML =
+          '<div class="stat-card"><div class="value">' + data.totalProjects + '</div><div class="label">Projects</div></div>' +
+          '<div class="stat-card"><div class="value">' + data.totalSessions + '</div><div class="label">Sessions</div></div>' +
+          '<div class="stat-card"><div class="value">' + data.totalLearnings + '</div><div class="label">Learnings</div></div>';
+        document.getElementById('placeholder').textContent =
+          data.totalLearnings > 0 ? 'Search above to explore learnings.' : 'No learnings yet. Run: npm run dev -- scan';
+      } catch {
+        document.getElementById('placeholder').textContent = 'API not available. Start server with: npm run serve:dev';
+      }
+    }
+
+    async function doSearch() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) return;
+      const el = document.getElementById('results');
+      const placeholder = document.getElementById('placeholder');
+      try {
+        const res = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query })
+        });
+        const data = await res.json();
+        if (!data.results || data.results.length === 0) {
+          el.innerHTML = '';
+          placeholder.textContent = 'No results for "' + esc(query) + '"';
+          return;
+        }
+        placeholder.textContent = '';
+        el.innerHTML = data.results.map(function(r) {
+          return '<li>' +
+            '<div class="meta">' + esc(r.learning.projectName) + ' &middot; ' +
+            esc(r.learning.sourceType) + ' &middot; ' + esc(r.learning.category) +
+            ' &middot; ' + esc(r.learning.sourcePath) + '</div>' +
+            '<div class="snippet">' + r.snippet + '</div>' +
+            '</li>';
+        }).join('');
+      } catch {
+        placeholder.textContent = 'Search failed. Is the server running?';
+      }
+    }
+
+    document.getElementById('searchInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') doSearch();
+    });
+
+    loadStats();
+  </script>
+</body>
+</html>

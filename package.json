@@ -1,0 +1,37 @@
+{
+  "name": "monitor",
+  "version": "0.1.0",
+  "description": "Meta-learning system for Claude Code projects — collects, analyzes, and serves patterns from ~/.claude/projects/",
+  "type": "module",
+  "main": "build/cli/index.js",
+  "bin": {
+    "monitor": "build/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "npx claude-md-lint@1 . --fail-under 95",
+    "lint:ts": "tsc --noEmit",
+    "serve:dev": "tsx src/server/api.ts",
+    "mcp:dev": "tsx src/mcp/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^12.6.2",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
