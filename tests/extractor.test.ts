@@ -384,6 +384,47 @@ describe("LearningExtractor", () => {
       expect(models).toContain("claude-haiku-4-5-20251001");
     });
 
+    it("computes mixed-model costs using per-model pricing", async () => {
+      // Opus 4.6: 1M input = $5, Haiku 4.5: 1M input = $0.80
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a1",
+          message: {
+            model: "claude-opus-4-6", content: [], stop_reason: "end_turn",
+            usage: { input_tokens: 1_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } },
+          },
+        },
+        { type: "user", timestamp: "T2", uuid: "u1", message: { content: [] } },
+        {
+          type: "assistant", timestamp: "T3", uuid: "a2",
+          message: {
+            model: "claude-haiku-4-5-20251001", content: [], stop_reason: "end_turn",
+            usage: { input_tokens: 1_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } },
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // Opus: 1M * $5/M = $5.00, Haiku: 1M * $0.80/M = $0.80
+      expect(result.analytics.estimatedCostUsd).toBeCloseTo(5.80, 2);
+    });
+
+    it("falls back to Opus pricing for unknown model", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a1",
+          message: {
+            model: "claude-unknown-model", content: [], stop_reason: "end_turn",
+            usage: { input_tokens: 1_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } },
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // Falls back to Opus 4.6 pricing: $5/M input
+      expect(result.analytics.estimatedCostUsd).toBeCloseTo(5.0, 2);
+    });
+
     it("handles empty JSONL file", async () => {
       const filePath = join(tempDir, "empty.jsonl");
       writeFileSync(filePath, "", "utf-8");
@@ -493,15 +534,16 @@ describe("LearningExtractor", () => {
   describe("extractFromMemory", () => {
     it("splits markdown into sections", () => {
       const content = "## Architecture\n\nUse SQLite for storage.\n\n## Patterns\n\nAlways wrap transactions properly.\n";
-      const learnings = extractor.extractFromMemory(content, "testapp");
+      const learnings = extractor.extractFromMemory(content, "testapp", "-Users-kevin-Projects-testapp");
       expect(learnings).toHaveLength(2);
       expect(learnings[0].sourceType).toBe("memory");
       expect(learnings[0].projectName).toBe("testapp");
+      expect(learnings[0].projectDirName).toBe("-Users-kevin-Projects-testapp");
     });
 
     it("categorizes content heuristically", () => {
       const content = "## Bug Report\n\nFixed a bug in the database layer that caused data corruption.\n\n## Architecture\n\nThe system uses a layered architecture with clear separation of concerns.\n";
-      const learnings = extractor.extractFromMemory(content, "test");
+      const learnings = extractor.extractFromMemory(content, "test", "-Users-kevin-Projects-test");
       const bugLearning = learnings.find((l) => l.content.includes("bug"));
       expect(bugLearning?.category).toBe("bug");
       const archLearning = learnings.find((l) => l.content.includes("architecture"));
@@ -514,11 +556,12 @@ describe("LearningExtractor", () => {
       const rules = [
         { path: "test-rule.md", content: "---\ndescription: A test rule\n---\n# Rule\n\nMUST do X." },
       ];
-      const learnings = extractor.extractFromRules(rules, "test");
+      const learnings = extractor.extractFromRules(rules, "test", "-Users-kevin-Projects-test");
       expect(learnings).toHaveLength(1);
       expect(learnings[0].content).not.toContain("---");
       expect(learnings[0].content).toContain("MUST do X");
       expect(learnings[0].category).toBe("convention");
+      expect(learnings[0].projectDirName).toBe("-Users-kevin-Projects-test");
     });
   });
 });

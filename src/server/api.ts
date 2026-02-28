@@ -11,12 +11,14 @@ import {
   type ServerResponse,
 } from "node:http";
 import { readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MonitorDatabase } from "../storage/database.js";
 import { ProjectScanner } from "../collector/scanner.js";
 import { LearningExtractor } from "../analyzer/extractor.js";
+import { runScan } from "../analyzer/scan-service.js";
+import { redactProject, redactSession, redactMessage, redactSubagent } from "./redact.js";
+import { generateRecommendations } from "../analyzer/recommendations.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const STATIC_DIR = resolve(__dirname, "../static");
@@ -87,9 +89,9 @@ const server = createServer(async (req, res) => {
 
     if (pathname === "/api/projects" && method === "GET") {
       const projects = db.getProjects();
-      const enriched = projects.map((p) => ({
+      const enriched = projects.map((p) => redactProject({
         ...p,
-        fileCount: db.getProjectFiles(p.name).length,
+        fileCount: db.getProjectFiles(p.dirName).length,
       }));
       sendJson(res, { projects: enriched });
       return;
@@ -126,149 +128,34 @@ const server = createServer(async (req, res) => {
 
       const scanner = new ProjectScanner();
       const extractor = new LearningExtractor();
-      const startTime = Date.now();
 
-      const projects = await scanner.discoverProjects();
-      let sessionCount = 0;
-      let learningCount = 0;
-      let fileCount = 0;
-      let fileChangedCount = 0;
-      let errorCount = 0;
-      let deepSessionCount = 0;
-      let deepMessageCount = 0;
-      let deepToolCount = 0;
-      let deepThinkingCount = 0;
+      const progress = await runScan(db, scanner, extractor, { deep });
 
-      for (const project of projects) {
-        try {
-          db.upsertProject(project);
-
-          const jsonlPaths = await scanner.discoverSessions(project.dirName);
-          for (const jsonlPath of jsonlPaths) {
-            try {
-              const session = await extractor.extractSessionMeta(jsonlPath, project.dirName);
-              db.upsertSession(session);
-              sessionCount++;
-            } catch {
-              errorCount++;
-            }
-          }
-
-          db.clearLearningsForProject(project.name);
-
-          const memory = await scanner.readMemoryFile(project.dirName);
-          if (memory) {
-            for (const l of extractor.extractFromMemory(memory, project.name)) {
-              db.insertLearning(l);
-              learningCount++;
-            }
-          }
-
-          const claudeMd = await scanner.readClaudeMd(project.projectPath);
-          if (claudeMd) {
-            for (const l of extractor.extractFromClaudeMd(claudeMd, project.name)) {
-              db.insertLearning(l);
-              learningCount++;
-            }
-          }
-
-          const rules = await scanner.readRuleFiles(project.projectPath);
-          if (rules.length > 0) {
-            for (const l of extractor.extractFromRules(rules, project.name)) {
-              db.insertLearning(l);
-              learningCount++;
-            }
-          }
-
-          const agentLessons = await scanner.readAgentLessons(project.projectPath);
-          if (agentLessons) {
-            for (const l of extractor.extractFromAgentLessons(agentLessons, project.name)) {
-              db.insertLearning(l);
-              learningCount++;
-            }
-          }
-
-          const collectedFiles = await scanner.collectAllFiles(project);
-          for (const file of collectedFiles) {
-            try {
-              const { changed } = db.upsertProjectFile(file);
-              fileCount++;
-              if (changed) fileChangedCount++;
-            } catch {
-              errorCount++;
-            }
-          }
-
-          // Deep extraction for this project's sessions
-          if (deep) {
-            for (const jsonlPath of jsonlPaths) {
-              try {
-                const sessionMeta = await extractor.extractSessionMeta(jsonlPath, project.dirName);
-                const sessionId = sessionMeta.sessionId;
-                if (db.isSessionDeepExtracted(sessionId)) continue;
-
-                const result = await extractor.extractSessionDeep(jsonlPath, sessionId);
-                db.insertSessionMessages(result.messages);
-                db.insertToolInvocations(result.toolInvocations);
-                db.insertThinkingBlocks(result.thinkingBlocks);
-
-                const sessionDirs = await scanner.discoverSessionDirectories(project.dirName);
-                const sessionDirId = sessionDirs.find((d) => d === sessionId || jsonlPath.includes(d)) ?? sessionId;
-
-                const subagentFiles = await scanner.discoverSubagentSessions(project.dirName, sessionDirId);
-                for (const sub of subagentFiles) {
-                  try {
-                    const subRun = await extractor.extractSubagentMeta(sub.jsonlPath, sessionId, sub.agentId);
-                    db.upsertSubagentRun(subRun);
-                  } catch { errorCount++; }
-                }
-                result.analytics.subagentCount = subagentFiles.length;
-                db.upsertSessionAnalytics(result.analytics);
-
-                const toolResultFiles = await scanner.discoverToolResultFiles(project.dirName, sessionDirId);
-                for (const tr of toolResultFiles) {
-                  try {
-                    const content = await readFile(tr.filePath, "utf-8");
-                    db.upsertToolResultFile({
-                      sessionId,
-                      toolUseId: tr.toolUseId,
-                      content,
-                      sizeBytes: Buffer.byteLength(content, "utf-8"),
-                    });
-                  } catch { errorCount++; }
-                }
-
-                deepSessionCount++;
-                deepMessageCount += result.messages.length;
-                deepToolCount += result.toolInvocations.length;
-                deepThinkingCount += result.thinkingBlocks.length;
-              } catch { errorCount++; }
-            }
-          }
-        } catch {
-          errorCount++;
-        }
-      }
-
-      const durationMs = Date.now() - startTime;
       sendJson(res, {
-        projects: projects.length,
-        sessions: sessionCount,
-        learnings: learningCount,
-        files: fileCount,
-        filesChanged: fileChangedCount,
-        errors: errorCount,
-        durationMs,
-        deep: deep ? { sessions: deepSessionCount, messages: deepMessageCount, tools: deepToolCount, thinking: deepThinkingCount } : undefined,
+        projects: progress.projectsFound,
+        sessions: progress.sessionsScanned,
+        learnings: progress.learningsExtracted,
+        files: progress.filesCollected,
+        filesChanged: progress.filesChanged,
+        errors: progress.errors,
+        durationMs: progress.durationMs,
+        deep: deep ? {
+          sessions: progress.deepSessions,
+          messages: progress.deepMessages,
+          tools: progress.deepTools,
+          thinking: progress.deepThinking,
+        } : undefined,
       });
       return;
     }
 
-    // GET /api/files/:project — list files for a project
+    // GET /api/files/:project — list files for a project (accepts name, resolves to dirName)
     const filesMatch = pathname.match(/^\/api\/files\/([^/]+)$/);
     if (filesMatch && method === "GET") {
       const projectName = decodeURIComponent(filesMatch[1]);
-      const files = db.getProjectFiles(projectName);
+      const project = db.getProjectByName(projectName);
+      const dirName = project?.dirName ?? projectName;
+      const files = db.getProjectFiles(dirName);
       // Return metadata without full content for listing
       const listing = files.map((f) => ({
         id: f.id,
@@ -288,12 +175,14 @@ const server = createServer(async (req, res) => {
     const fileContentMatch = pathname.match(/^\/api\/files\/([^/]+)\/content$/);
     if (fileContentMatch && method === "GET") {
       const projectName = decodeURIComponent(fileContentMatch[1]);
+      const project = db.getProjectByName(projectName);
+      const dirName = project?.dirName ?? projectName;
       const relativePath = url.searchParams.get("path");
       if (!relativePath) {
         sendError(res, "Missing path query parameter");
         return;
       }
-      const file = db.getProjectFile(projectName, relativePath);
+      const file = db.getProjectFile(dirName, relativePath);
       if (!file) {
         sendError(res, "File not found", 404);
         return;
@@ -306,12 +195,14 @@ const server = createServer(async (req, res) => {
     const fileVersionsMatch = pathname.match(/^\/api\/files\/([^/]+)\/versions$/);
     if (fileVersionsMatch && method === "GET") {
       const projectName = decodeURIComponent(fileVersionsMatch[1]);
+      const project = db.getProjectByName(projectName);
+      const dirName = project?.dirName ?? projectName;
       const relativePath = url.searchParams.get("path");
       if (!relativePath) {
         sendError(res, "Missing path query parameter");
         return;
       }
-      const file = db.getProjectFile(projectName, relativePath);
+      const file = db.getProjectFile(dirName, relativePath);
       if (!file) {
         sendError(res, "File not found", 404);
         return;
@@ -327,7 +218,7 @@ const server = createServer(async (req, res) => {
     const sessionsListMatch = pathname.match(/^\/api\/sessions\/project\/([^/]+)$/);
     if (sessionsListMatch && method === "GET") {
       const projectDirName = decodeURIComponent(sessionsListMatch[1]);
-      const sessions = db.getSessions(projectDirName);
+      const sessions = db.getSessions(projectDirName).map((s) => redactSession(s as unknown as Record<string, unknown>));
       sendJson(res, { sessions });
       return;
     }
@@ -339,7 +230,7 @@ const server = createServer(async (req, res) => {
       const entryType = url.searchParams.get("type") ?? undefined;
       const limit = parseInt(url.searchParams.get("limit") ?? "200", 10);
       const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
-      const messages = db.getSessionMessages(sessionId, { entryType, limit, offset });
+      const messages = db.getSessionMessages(sessionId, { entryType, limit, offset }).map((m) => redactMessage(m as unknown as Record<string, unknown>));
       sendJson(res, { messages });
       return;
     }
@@ -367,7 +258,7 @@ const server = createServer(async (req, res) => {
     const subagentsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/subagents$/);
     if (subagentsMatch && method === "GET") {
       const sessionId = decodeURIComponent(subagentsMatch[1]);
-      const subagents = db.getSubagentRuns(sessionId);
+      const subagents = db.getSubagentRuns(sessionId).map((s) => redactSubagent(s as unknown as Record<string, unknown>));
       sendJson(res, { subagents });
       return;
     }
@@ -428,6 +319,49 @@ const server = createServer(async (req, res) => {
     if (pathname === "/api/analytics/summary" && method === "GET") {
       const analytics = db.getAnalyticsStats();
       sendJson(res, { analytics: analytics ?? null });
+      return;
+    }
+
+    // GET /api/analytics/tool-success-rates — per-tool success rates
+    if (pathname === "/api/analytics/tool-success-rates" && method === "GET") {
+      const rates = db.getToolSuccessRates();
+      sendJson(res, { rates });
+      return;
+    }
+
+    // GET /api/analytics/model-breakdown — per-model token/message stats
+    if (pathname === "/api/analytics/model-breakdown" && method === "GET") {
+      const models = db.getModelStats();
+      sendJson(res, { models });
+      return;
+    }
+
+    // GET /api/analytics/project-coverage — deep extraction coverage per project
+    if (pathname === "/api/analytics/project-coverage" && method === "GET") {
+      const coverage = db.getProjectAnalyticsCoverage();
+      sendJson(res, { coverage });
+      return;
+    }
+
+    // GET /api/analytics/expensive-sessions — most expensive sessions
+    if (pathname === "/api/analytics/expensive-sessions" && method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "10", 10);
+      const sessions = db.getMostExpensiveSessions(limit);
+      sendJson(res, { sessions });
+      return;
+    }
+
+    // GET /api/analytics/expensive-projects — most expensive projects
+    if (pathname === "/api/analytics/expensive-projects" && method === "GET") {
+      const projects = db.getMostExpensiveProjects();
+      sendJson(res, { projects });
+      return;
+    }
+
+    // GET /api/analytics/recommendations — optimization suggestions
+    if (pathname === "/api/analytics/recommendations" && method === "GET") {
+      const recommendations = generateRecommendations(db);
+      sendJson(res, { recommendations });
       return;
     }
 

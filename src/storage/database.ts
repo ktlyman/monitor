@@ -19,7 +19,7 @@ import type {
   SystemStats,
 } from "../types/index.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -269,6 +269,7 @@ export class MonitorDatabase {
       if (currentVersion < 2) this._migrateV2();
       if (currentVersion < 3) this._migrateV3();
       if (currentVersion < 4) this._migrateV4();
+      if (currentVersion < 5) this._migrateV5();
       this.db
         .prepare(
           "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -413,11 +414,12 @@ export class MonitorDatabase {
   insertLearning(learning: Learning): number {
     const result = this.db
       .prepare(
-        `INSERT INTO learnings (project_name, source_type, source_path, content, category, extracted_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO learnings (project_name, project_dir_name, source_type, source_path, content, category, extracted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         learning.projectName,
+        learning.projectDirName,
         learning.sourceType,
         learning.sourcePath,
         learning.content,
@@ -427,10 +429,10 @@ export class MonitorDatabase {
     return Number(result.lastInsertRowid);
   }
 
-  clearLearningsForProject(projectName: string): void {
+  clearLearningsForProject(projectDirName: string): void {
     this.db
-      .prepare("DELETE FROM learnings WHERE project_name = ?")
-      .run(projectName);
+      .prepare("DELETE FROM learnings WHERE project_dir_name = ?")
+      .run(projectDirName);
   }
 
   // ---- Search methods ----
@@ -484,6 +486,7 @@ export class MonitorDatabase {
       learning: {
         id: r.id as number,
         projectName: r.project_name as string,
+        projectDirName: (r.project_dir_name as string) ?? "",
         sourceType: r.source_type as string,
         sourcePath: r.source_path as string,
         content: r.content as string,
@@ -528,7 +531,7 @@ export class MonitorDatabase {
     const projectRows = this.db
       .prepare(
         `SELECT p.name, p.session_count as sessions,
-                (SELECT COUNT(*) FROM learnings l WHERE l.project_name = p.name) as learnings,
+                (SELECT COUNT(*) FROM learnings l WHERE l.project_dir_name = p.dir_name) as learnings,
                 p.last_scanned_at as lastScanned
          FROM projects p ORDER BY p.name`
       )
@@ -563,8 +566,8 @@ export class MonitorDatabase {
     const now = new Date().toISOString();
 
     const existing = this.db
-      .prepare("SELECT id, content_hash FROM project_files WHERE project_name = ? AND relative_path = ?")
-      .get(file.projectName, file.relativePath) as { id: number; content_hash: string } | undefined;
+      .prepare("SELECT id, content_hash FROM project_files WHERE project_dir_name = ? AND relative_path = ?")
+      .get(file.projectDirName, file.relativePath) as { id: number; content_hash: string } | undefined;
 
     if (existing) {
       if (existing.content_hash === hash) {
@@ -597,10 +600,10 @@ export class MonitorDatabase {
     // New file — insert and create first version
     const result = this.db
       .prepare(
-        `INSERT INTO project_files (project_name, file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO project_files (project_name, project_dir_name, file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(file.projectName, file.fileType, file.relativePath, file.content, hash, sizeBytes, now, now);
+      .run(file.projectName, file.projectDirName, file.fileType, file.relativePath, file.content, hash, sizeBytes, now, now);
 
     const fileId = Number(result.lastInsertRowid);
     this.db
@@ -613,18 +616,19 @@ export class MonitorDatabase {
     return { changed: true };
   }
 
-  /** Get all files for a project. */
-  getProjectFiles(projectName: string): ProjectFile[] {
+  /** Get all files for a project by dirName. */
+  getProjectFiles(projectDirName: string): ProjectFile[] {
     const rows = this.db
       .prepare(
-        `SELECT id, project_name, file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at
-         FROM project_files WHERE project_name = ? ORDER BY file_type, relative_path`
+        `SELECT id, project_name, project_dir_name, file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at
+         FROM project_files WHERE project_dir_name = ? ORDER BY file_type, relative_path`
       )
-      .all(projectName) as Array<Record<string, unknown>>;
+      .all(projectDirName) as Array<Record<string, unknown>>;
 
     return rows.map((r) => ({
       id: r.id as number,
       projectName: r.project_name as string,
+      projectDirName: r.project_dir_name as string,
       fileType: r.file_type as string,
       relativePath: r.relative_path as string,
       content: r.content as string,
@@ -635,19 +639,20 @@ export class MonitorDatabase {
     })) as ProjectFile[];
   }
 
-  /** Get a single file by project and path. */
-  getProjectFile(projectName: string, relativePath: string): ProjectFile | null {
+  /** Get a single file by project dirName and path. */
+  getProjectFile(projectDirName: string, relativePath: string): ProjectFile | null {
     const r = this.db
       .prepare(
-        `SELECT id, project_name, file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at
-         FROM project_files WHERE project_name = ? AND relative_path = ?`
+        `SELECT id, project_name, project_dir_name, file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at
+         FROM project_files WHERE project_dir_name = ? AND relative_path = ?`
       )
-      .get(projectName, relativePath) as Record<string, unknown> | undefined;
+      .get(projectDirName, relativePath) as Record<string, unknown> | undefined;
 
     if (!r) return null;
     return {
       id: r.id as number,
       projectName: r.project_name as string,
+      projectDirName: r.project_dir_name as string,
       fileType: r.file_type as string,
       relativePath: r.relative_path as string,
       content: r.content as string,
@@ -1110,6 +1115,160 @@ export class MonitorDatabase {
       ALTER TABLE session_analytics ADD COLUMN total_cache_write_5m_tokens INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE session_analytics ADD COLUMN total_cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0;
     `);
+  }
+
+  private _migrateV5(): void {
+    // Add project_dir_name to learnings
+    this.db.exec(`ALTER TABLE learnings ADD COLUMN project_dir_name TEXT NOT NULL DEFAULT ''`);
+    // Backfill from projects table
+    this.db.exec(`
+      UPDATE learnings SET project_dir_name = COALESCE(
+        (SELECT dir_name FROM projects WHERE projects.name = learnings.project_name LIMIT 1),
+        learnings.project_name
+      )
+    `);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_learnings_dir ON learnings(project_dir_name)`);
+
+    // Rebuild project_files with project_dir_name and updated unique constraint
+    this.db.exec(`
+      CREATE TABLE project_files_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_name  TEXT NOT NULL,
+        project_dir_name TEXT NOT NULL DEFAULT '',
+        file_type     TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        content       TEXT NOT NULL,
+        content_hash  TEXT NOT NULL,
+        size_bytes    INTEGER NOT NULL DEFAULT 0,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at  TEXT NOT NULL,
+        UNIQUE(project_dir_name, relative_path)
+      )
+    `);
+    this.db.exec(`
+      INSERT INTO project_files_new
+        SELECT id, project_name,
+          COALESCE((SELECT dir_name FROM projects WHERE projects.name = project_files.project_name LIMIT 1), project_name),
+          file_type, relative_path, content, content_hash, size_bytes, first_seen_at, last_seen_at
+        FROM project_files
+    `);
+    this.db.exec(`DROP TABLE project_files`);
+    this.db.exec(`ALTER TABLE project_files_new RENAME TO project_files`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_files_dir ON project_files(project_dir_name)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_files_type ON project_files(file_type)`);
+  }
+
+  // ---- New query methods for analytics & MCP ----
+
+  /** Get a project by its human-readable name. */
+  getProjectByName(name: string): Project | null {
+    const r = this.db
+      .prepare("SELECT * FROM projects WHERE name = ? LIMIT 1")
+      .get(name) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return {
+      dirName: r.dir_name as string,
+      name: r.name as string,
+      projectPath: r.project_path as string,
+      sessionCount: r.session_count as number,
+      hasMemory: (r.has_memory as number) === 1,
+      hasClaudeMd: (r.has_claude_md as number) === 1,
+      lastScannedAt: r.last_scanned_at as string,
+    };
+  }
+
+  /** Get all learnings for a project by dir_name. */
+  getLearningsForProject(projectDirName: string): Learning[] {
+    const rows = this.db
+      .prepare("SELECT * FROM learnings WHERE project_dir_name = ? ORDER BY source_type, category")
+      .all(projectDirName) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r.id as number,
+      projectName: r.project_name as string,
+      projectDirName: r.project_dir_name as string,
+      sourceType: r.source_type as string,
+      sourcePath: r.source_path as string,
+      content: r.content as string,
+      category: r.category as string,
+      extractedAt: r.extracted_at as string,
+    })) as Learning[];
+  }
+
+  /** Get tool success rates across all sessions. */
+  getToolSuccessRates(): Array<{ toolName: string; total: number; errors: number; successRate: number }> {
+    return this.db
+      .prepare(
+        `SELECT tool_name as toolName, COUNT(*) as total, SUM(is_error) as errors,
+                ROUND(1.0 - (CAST(SUM(is_error) AS REAL) / COUNT(*)), 4) as successRate
+         FROM tool_invocations
+         GROUP BY tool_name
+         ORDER BY total DESC
+         LIMIT 20`
+      )
+      .all() as Array<{ toolName: string; total: number; errors: number; successRate: number }>;
+  }
+
+  /** Get per-model message and token stats. */
+  getModelStats(): Array<{ model: string; messageCount: number; totalInputTokens: number; totalOutputTokens: number }> {
+    return this.db
+      .prepare(
+        `SELECT model, COUNT(*) as messageCount,
+                SUM(input_tokens) as totalInputTokens,
+                SUM(output_tokens) as totalOutputTokens
+         FROM session_messages
+         WHERE model IS NOT NULL
+         GROUP BY model
+         ORDER BY messageCount DESC`
+      )
+      .all() as Array<{ model: string; messageCount: number; totalInputTokens: number; totalOutputTokens: number }>;
+  }
+
+  /** Get analytics extraction coverage per project. */
+  getProjectAnalyticsCoverage(): Array<{ projectName: string; dirName: string; totalSessions: number; deepExtractedSessions: number; totalCostUsd: number }> {
+    return this.db
+      .prepare(
+        `SELECT p.name as projectName, p.dir_name as dirName, p.session_count as totalSessions,
+                COUNT(sa.session_id) as deepExtractedSessions,
+                COALESCE(SUM(sa.estimated_cost_usd), 0) as totalCostUsd
+         FROM projects p
+         LEFT JOIN sessions s ON s.project_dir_name = p.dir_name
+         LEFT JOIN session_analytics sa ON sa.session_id = s.session_id
+         GROUP BY p.dir_name
+         ORDER BY totalCostUsd DESC`
+      )
+      .all() as Array<{ projectName: string; dirName: string; totalSessions: number; deepExtractedSessions: number; totalCostUsd: number }>;
+  }
+
+  /** Get most expensive sessions. */
+  getMostExpensiveSessions(limit = 10): Array<{ sessionId: string; projectName: string; estimatedCostUsd: number; durationSeconds: number; totalToolUses: number; startedAt: string }> {
+    return this.db
+      .prepare(
+        `SELECT sa.session_id as sessionId, p.name as projectName, sa.estimated_cost_usd as estimatedCostUsd,
+                sa.duration_seconds as durationSeconds, sa.total_tool_uses as totalToolUses, s.started_at as startedAt
+         FROM session_analytics sa
+         JOIN sessions s ON s.session_id = sa.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         ORDER BY sa.estimated_cost_usd DESC
+         LIMIT ?`
+      )
+      .all(limit) as Array<{ sessionId: string; projectName: string; estimatedCostUsd: number; durationSeconds: number; totalToolUses: number; startedAt: string }>;
+  }
+
+  /** Get most expensive projects. */
+  getMostExpensiveProjects(): Array<{ projectName: string; totalCostUsd: number; sessionCount: number; avgCostPerSession: number }> {
+    return this.db
+      .prepare(
+        `SELECT p.name as projectName,
+                SUM(sa.estimated_cost_usd) as totalCostUsd,
+                COUNT(sa.session_id) as sessionCount,
+                AVG(sa.estimated_cost_usd) as avgCostPerSession
+         FROM session_analytics sa
+         JOIN sessions s ON s.session_id = sa.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         GROUP BY p.dir_name
+         ORDER BY totalCostUsd DESC`
+      )
+      .all() as Array<{ projectName: string; totalCostUsd: number; sessionCount: number; avgCostPerSession: number }>;
   }
 
   close(): void {

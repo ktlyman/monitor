@@ -18,16 +18,19 @@ and learnings from AI-assisted development sessions across all projects.
 ```
 src/
 ├── types/           Core type definitions
-│   └── index.ts       Project, Session, Learning, SessionMessage, ToolInvocation,
-│                       ThinkingBlock, SubagentRun, SessionAnalytics, SystemStats
+│   └── index.ts       Project, Session, Learning, ProjectFile, SessionMessage,
+│                       ToolInvocation, ThinkingBlock, SubagentRun, SessionAnalytics
 ├── storage/         SQLite + FTS5 persistence layer
 │   └── database.ts    MonitorDatabase class (schema, migrations, queries, FTS)
 ├── collector/       Filesystem scanner for ~/.claude/projects/
 │   └── scanner.ts     Discovers projects, sessions, MEMORY.md, CLAUDE.md files
 ├── analyzer/        Extracts learnings and session analytics
-│   └── extractor.ts   Parses JSONL sessions (deep extraction), MEMORY.md, CLAUDE.md, rules/
+│   ├── extractor.ts   Parses JSONL sessions (deep extraction), MEMORY.md, CLAUDE.md, rules/
+│   ├── scan-service.ts Shared scan orchestration (used by CLI + API)
+│   └── recommendations.ts Rules-based optimization recommendations
 ├── server/          HTTP API + static frontend serving
-│   └── api.ts         Node.js HTTP server, JSON API, SSE, static file serving
+│   ├── api.ts         Node.js HTTP server, JSON API, static file serving
+│   └── redact.ts      Path redaction for API responses (privacy)
 ├── mcp/             MCP server for agent integration
 │   └── server.ts      Stdio-based MCP server exposing query tools
 ├── cli/             CLI entry point (commander-based)
@@ -107,7 +110,7 @@ depends on `types/` and `collector/`. `server/` and `mcp/` depend on `storage/` 
 2. Add discovery logic in `src/collector/scanner.ts`.
 3. Add extraction logic in `src/analyzer/extractor.ts`.
 4. Add storage method in `src/storage/database.ts`.
-5. Wire into CLI scan command in `src/cli/index.ts`.
+5. Wire into shared scan service in `src/analyzer/scan-service.ts`.
 
 ### Adding a new API endpoint
 

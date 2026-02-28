@@ -25,7 +25,7 @@ describe("MonitorDatabase", () => {
 
   // ---- Schema ----
 
-  it("initializes with schema v4", () => {
+  it("initializes with schema v5", () => {
     // Verify all core tables exist by performing simple queries
     expect(() => db.getProjects()).not.toThrow();
     expect(() => db.getStats()).not.toThrow();
@@ -95,6 +95,7 @@ describe("MonitorDatabase", () => {
   it("inserts and searches learnings via FTS5", () => {
     const learning: Learning = {
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       sourceType: "memory",
       sourcePath: "memory/MEMORY.md",
       content: "Always use streaming readline for large JSONL files",
@@ -106,11 +107,13 @@ describe("MonitorDatabase", () => {
     const results = db.search({ query: "streaming readline" });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].learning.content).toContain("streaming readline");
+    expect(results[0].learning.projectDirName).toBe("-Users-kevin-Projects-testapp");
   });
 
-  it("clears learnings for a project", () => {
+  it("clears learnings for a project by dirName", () => {
     db.insertLearning({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       sourceType: "memory",
       sourcePath: "memory/MEMORY.md",
       content: "Test learning content about patterns",
@@ -119,7 +122,7 @@ describe("MonitorDatabase", () => {
     });
     expect(db.search({ query: "patterns" }).length).toBeGreaterThan(0);
 
-    db.clearLearningsForProject("testapp");
+    db.clearLearningsForProject("-Users-kevin-Projects-testapp");
     expect(db.search({ query: "patterns" }).length).toBe(0);
   });
 
@@ -128,6 +131,7 @@ describe("MonitorDatabase", () => {
   it("upserts project files with content hashing", () => {
     const result1 = db.upsertProjectFile({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       fileType: "claude_md",
       relativePath: "CLAUDE.md",
       content: "# Test CLAUDE.md\n\nSome content here.",
@@ -137,6 +141,7 @@ describe("MonitorDatabase", () => {
     // Same content => no change
     const result2 = db.upsertProjectFile({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       fileType: "claude_md",
       relativePath: "CLAUDE.md",
       content: "# Test CLAUDE.md\n\nSome content here.",
@@ -146,6 +151,7 @@ describe("MonitorDatabase", () => {
     // Different content => changed
     const result3 = db.upsertProjectFile({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       fileType: "claude_md",
       relativePath: "CLAUDE.md",
       content: "# Test CLAUDE.md\n\nUpdated content here.",
@@ -153,19 +159,21 @@ describe("MonitorDatabase", () => {
     expect(result3.changed).toBe(true);
   });
 
-  it("gets project files and file content", () => {
+  it("gets project files and file content by dirName", () => {
     db.upsertProjectFile({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       fileType: "rules",
       relativePath: ".claude/rules/test.md",
       content: "# Test Rule",
     });
 
-    const files = db.getProjectFiles("testapp");
+    const files = db.getProjectFiles("-Users-kevin-Projects-testapp");
     expect(files).toHaveLength(1);
     expect(files[0].relativePath).toBe(".claude/rules/test.md");
+    expect(files[0].projectDirName).toBe("-Users-kevin-Projects-testapp");
 
-    const file = db.getProjectFile("testapp", ".claude/rules/test.md");
+    const file = db.getProjectFile("-Users-kevin-Projects-testapp", ".claude/rules/test.md");
     expect(file).not.toBeNull();
     expect(file!.content).toBe("# Test Rule");
   });
@@ -173,18 +181,20 @@ describe("MonitorDatabase", () => {
   it("creates file versions on content change", () => {
     db.upsertProjectFile({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       fileType: "memory",
       relativePath: "memory/MEMORY.md",
       content: "Version 1",
     });
     db.upsertProjectFile({
       projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
       fileType: "memory",
       relativePath: "memory/MEMORY.md",
       content: "Version 2",
     });
 
-    const file = db.getProjectFile("testapp", "memory/MEMORY.md");
+    const file = db.getProjectFile("-Users-kevin-Projects-testapp", "memory/MEMORY.md");
     const versions = db.getFileVersions(file!.id!);
     // First insert creates version 1, second creates version 2
     expect(versions).toHaveLength(2);
@@ -558,5 +568,144 @@ describe("MonitorDatabase", () => {
     const stats = db.getStats();
     expect(stats.analytics).toBeDefined();
     expect(stats.analytics!.sessionsDeepExtracted).toBe(1);
+  });
+
+  // ---- Tool success rates ----
+
+  it("computes tool success rates", () => {
+    db.insertToolInvocations([
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T1" },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t2", toolName: "Read", inputSummary: "{}", isError: true, timestamp: "T2" },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T3" },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t4", toolName: "Bash", inputSummary: "{}", isError: false, timestamp: "T4" },
+    ]);
+
+    const rates = db.getToolSuccessRates();
+    const readRate = rates.find((r) => r.toolName === "Read");
+    expect(readRate).toBeDefined();
+    expect(readRate!.total).toBe(3);
+    expect(readRate!.errors).toBe(1);
+    expect(readRate!.successRate).toBeCloseTo(0.6667, 3);
+
+    const bashRate = rates.find((r) => r.toolName === "Bash");
+    expect(bashRate).toBeDefined();
+    expect(bashRate!.successRate).toBe(1);
+  });
+
+  // ---- Model stats ----
+
+  it("returns per-model message stats", () => {
+    db.insertSessionMessages([
+      { sessionId: "s1", uuid: "m-opus", parentUuid: null, entryType: "assistant", timestamp: "T1", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 5000, outputTokens: 2000, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+      { sessionId: "s1", uuid: "m-haiku1", parentUuid: null, entryType: "assistant", timestamp: "T2", model: "claude-haiku-4-5-20251001", stopReason: "end_turn", inputTokens: 1000, outputTokens: 500, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+      { sessionId: "s1", uuid: "m-haiku2", parentUuid: null, entryType: "assistant", timestamp: "T3", model: "claude-haiku-4-5-20251001", stopReason: "end_turn", inputTokens: 2000, outputTokens: 1000, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+    ]);
+
+    const stats = db.getModelStats();
+    const opus = stats.find((s) => s.model === "claude-opus-4-6");
+    expect(opus).toBeDefined();
+    expect(opus!.messageCount).toBe(1);
+    expect(opus!.totalInputTokens).toBe(5000);
+
+    const haiku = stats.find((s) => s.model === "claude-haiku-4-5-20251001");
+    expect(haiku).toBeDefined();
+    expect(haiku!.messageCount).toBe(2);
+    expect(haiku!.totalInputTokens).toBe(3000);
+  });
+
+  // ---- Project coverage ----
+
+  it("reports project analytics coverage", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.upsertSessionAnalytics({
+      sessionId: "abc-123", totalInputTokens: 50000, totalOutputTokens: 25000,
+      totalCacheCreationTokens: 0, totalCacheReadTokens: 0,
+      totalCacheWrite5mTokens: 0, totalCacheWrite1hTokens: 0,
+      estimatedCostUsd: 1.50,
+      toolBreakdown: {}, errorCount: 0, totalToolUses: 10, thinkingBlockCount: 5,
+      thinkingCharCount: 2000, subagentCount: 0, apiRequestCount: 8,
+      models: "claude-opus-4-6", durationSeconds: 600,
+      deepExtractedAt: new Date().toISOString(),
+    });
+
+    const coverage = db.getProjectAnalyticsCoverage();
+    const project = coverage.find((c) => c.dirName === testProject.dirName);
+    expect(project).toBeDefined();
+    expect(project!.deepExtractedSessions).toBe(1);
+    expect(project!.totalCostUsd).toBeCloseTo(1.50, 2);
+  });
+
+  // ---- Expensive sessions/projects ----
+
+  it("returns most expensive sessions", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.upsertSession({ ...testSession, sessionId: "sess-2" });
+
+    db.upsertSessionAnalytics({
+      sessionId: "abc-123", totalInputTokens: 100000, totalOutputTokens: 50000,
+      totalCacheCreationTokens: 0, totalCacheReadTokens: 0,
+      totalCacheWrite5mTokens: 0, totalCacheWrite1hTokens: 0,
+      estimatedCostUsd: 5.00,
+      toolBreakdown: {}, errorCount: 0, totalToolUses: 20, thinkingBlockCount: 10,
+      thinkingCharCount: 5000, subagentCount: 0, apiRequestCount: 15,
+      models: "claude-opus-4-6", durationSeconds: 1800,
+      deepExtractedAt: new Date().toISOString(),
+    });
+    db.upsertSessionAnalytics({
+      sessionId: "sess-2", totalInputTokens: 200000, totalOutputTokens: 100000,
+      totalCacheCreationTokens: 0, totalCacheReadTokens: 0,
+      totalCacheWrite5mTokens: 0, totalCacheWrite1hTokens: 0,
+      estimatedCostUsd: 12.00,
+      toolBreakdown: {}, errorCount: 0, totalToolUses: 50, thinkingBlockCount: 20,
+      thinkingCharCount: 10000, subagentCount: 0, apiRequestCount: 30,
+      models: "claude-opus-4-6", durationSeconds: 3600,
+      deepExtractedAt: new Date().toISOString(),
+    });
+
+    const expensive = db.getMostExpensiveSessions(2);
+    expect(expensive).toHaveLength(2);
+    expect(expensive[0].estimatedCostUsd).toBe(12.00);
+    expect(expensive[1].estimatedCostUsd).toBe(5.00);
+  });
+
+  // ---- getProjectByName ----
+
+  it("looks up project by name", () => {
+    db.upsertProject(testProject);
+    const found = db.getProjectByName("testapp");
+    expect(found).not.toBeNull();
+    expect(found!.dirName).toBe("-Users-kevin-Projects-testapp");
+
+    const notFound = db.getProjectByName("nonexistent");
+    expect(notFound).toBeNull();
+  });
+
+  // ---- getLearningsForProject ----
+
+  it("gets learnings for a project by dirName", () => {
+    db.insertLearning({
+      projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sourceType: "memory",
+      sourcePath: "memory/MEMORY.md",
+      content: "Use SQLite for storage",
+      category: "architecture",
+      extractedAt: new Date().toISOString(),
+    });
+    db.insertLearning({
+      projectName: "other",
+      projectDirName: "-Users-kevin-Projects-other",
+      sourceType: "memory",
+      sourcePath: "memory/MEMORY.md",
+      content: "Different project",
+      category: "pattern",
+      extractedAt: new Date().toISOString(),
+    });
+
+    const learnings = db.getLearningsForProject("-Users-kevin-Projects-testapp");
+    expect(learnings).toHaveLength(1);
+    expect(learnings[0].content).toContain("SQLite");
   });
 });

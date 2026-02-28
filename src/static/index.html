@@ -281,7 +281,12 @@
   <div class="tab-content" id="tab-analytics">
     <div id="analyticsContainer">
       <div class="analytics-grid" id="analyticsSummary"></div>
+      <div id="recommendationsContainer"></div>
       <div id="toolChart"></div>
+      <div id="toolReliability"></div>
+      <div id="modelBreakdown"></div>
+      <div id="expensiveSessions"></div>
+      <div id="projectCoverage"></div>
       <div id="thinkingSearch">
         <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Search Thinking Blocks</h3>
         <div class="thinking-search-box">
@@ -597,11 +602,115 @@
           document.getElementById('toolChart').innerHTML = '<div class="bar-chart"><h3>Top Tools</h3>' + bars + '</div>';
         }
 
+        // Load extended analytics sections in parallel
+        loadToolReliability();
+        loadModelBreakdown();
+        loadExpensiveSessions();
+        loadProjectCoverage();
+        loadRecommendations();
+
         // Load projects for the session browser
         loadAnalyticsProjects();
       } catch {
         placeholder.textContent = 'Failed to load analytics.';
       }
+    }
+
+    async function loadToolReliability() {
+      try {
+        var res = await fetch('/api/analytics/tool-success-rates');
+        var data = await res.json();
+        if (!data.rates || data.rates.length === 0) return;
+        var rows = data.rates.map(function(r) {
+          var pct = (r.successRate * 100).toFixed(1);
+          var color = r.successRate >= 0.95 ? '#22c55e' : r.successRate >= 0.8 ? '#eab308' : '#ef4444';
+          return '<tr><td>' + esc(r.toolName) + '</td><td>' + r.total + '</td><td>' + r.errors + '</td>' +
+            '<td><span style="color:' + color + ';font-weight:600">' + pct + '%</span></td></tr>';
+        }).join('');
+        document.getElementById('toolReliability').innerHTML =
+          '<div class="bar-chart"><h3>Tool Reliability</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th style="text-align:left">Tool</th><th>Total</th><th>Errors</th><th>Success</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadModelBreakdown() {
+      try {
+        var res = await fetch('/api/analytics/model-breakdown');
+        var data = await res.json();
+        if (!data.models || data.models.length === 0) return;
+        var maxTokens = Math.max.apply(null, data.models.map(function(m) { return m.totalInputTokens + m.totalOutputTokens; }));
+        var bars = data.models.map(function(m) {
+          var total = m.totalInputTokens + m.totalOutputTokens;
+          var pct = Math.max(2, (total / maxTokens) * 100);
+          var label = m.model.replace('claude-', '');
+          return '<div class="bar-row">' +
+            '<span class="bar-label">' + esc(label) + '</span>' +
+            '<div class="bar-fill" style="width:' + pct + '%;background:#818cf8"></div>' +
+            '<span class="bar-count">' + formatNum(total) + ' tok (' + m.messageCount + ' msgs)</span>' +
+            '</div>';
+        }).join('');
+        document.getElementById('modelBreakdown').innerHTML = '<div class="bar-chart"><h3>Models</h3>' + bars + '</div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadExpensiveSessions() {
+      try {
+        var res = await fetch('/api/analytics/expensive-sessions?limit=5');
+        var data = await res.json();
+        if (!data.sessions || data.sessions.length === 0) return;
+        var rows = data.sessions.map(function(s) {
+          return '<tr><td>' + esc(s.projectName) + '</td>' +
+            '<td>' + formatCost(s.estimatedCostUsd) + '</td>' +
+            '<td>' + s.totalToolUses + '</td>' +
+            '<td>' + Math.round(s.durationSeconds / 60) + 'm</td></tr>';
+        }).join('');
+        document.getElementById('expensiveSessions').innerHTML =
+          '<div class="bar-chart"><h3>Most Expensive Sessions</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th style="text-align:left">Project</th><th>Cost</th><th>Tools</th><th>Duration</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadProjectCoverage() {
+      try {
+        var res = await fetch('/api/analytics/project-coverage');
+        var data = await res.json();
+        if (!data.coverage || data.coverage.length === 0) return;
+        var rows = data.coverage.map(function(c) {
+          var pct = c.totalSessions > 0 ? Math.round((c.deepExtractedSessions / c.totalSessions) * 100) : 0;
+          var color = pct === 100 ? '#22c55e' : pct > 0 ? '#eab308' : 'var(--muted)';
+          return '<tr><td>' + esc(c.projectName) + '</td>' +
+            '<td>' + c.deepExtractedSessions + '/' + c.totalSessions + '</td>' +
+            '<td><span style="color:' + color + '">' + pct + '%</span></td>' +
+            '<td>' + formatCost(c.totalCostUsd) + '</td></tr>';
+        }).join('');
+        document.getElementById('projectCoverage').innerHTML =
+          '<div class="bar-chart"><h3>Deep Extraction Coverage</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th style="text-align:left">Project</th><th>Extracted</th><th>%</th><th>Cost</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadRecommendations() {
+      try {
+        var res = await fetch('/api/analytics/recommendations');
+        if (!res.ok) return;
+        var data = await res.json();
+        if (!data.recommendations || data.recommendations.length === 0) return;
+        var items = data.recommendations.map(function(r) {
+          var icon = r.severity === 'warning' ? '&#9888;' : '&#8505;';
+          var color = r.severity === 'warning' ? '#eab308' : 'var(--accent)';
+          return '<div style="padding:0.5rem;border-left:3px solid ' + color + ';margin-bottom:0.5rem;background:var(--code-bg);border-radius:0 var(--radius) var(--radius) 0">' +
+            '<div style="font-weight:600;font-size:0.85rem">' + icon + ' ' + esc(r.message) + '</div>' +
+            '<div style="font-size:0.8rem;color:var(--muted)">' + esc(r.detail) + '</div></div>';
+        }).join('');
+        document.getElementById('recommendationsContainer').innerHTML =
+          '<div class="bar-chart"><h3>Recommendations</h3>' + items + '</div>';
+      } catch { /* ignore */ }
     }
 
     async function loadAnalyticsProjects() {

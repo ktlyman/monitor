@@ -6,6 +6,7 @@ import type { FileType, Project } from "../types/index.js";
 /** A collected file with its type and content. */
 export interface CollectedFile {
   projectName: string;
+  projectDirName: string;
   fileType: FileType;
   relativePath: string;
   content: string;
@@ -106,105 +107,54 @@ export class ProjectScanner {
    */
   async collectAllFiles(project: Project): Promise<CollectedFile[]> {
     const files: CollectedFile[] = [];
+    const pn = project.name;
+    const pd = project.dirName;
 
     // MEMORY.md from ~/.claude/projects/<dir>/memory/
     const memory = await this.readMemoryFile(project.dirName);
     if (memory) {
-      files.push({
-        projectName: project.name,
-        fileType: "memory",
-        relativePath: "memory/MEMORY.md",
-        content: memory,
-      });
+      files.push({ projectName: pn, projectDirName: pd, fileType: "memory", relativePath: "memory/MEMORY.md", content: memory });
     }
 
     // Also check for other .md files in the memory/ directory
-    await this._collectDirFiles(
-      join(this.baseDir, project.dirName, "memory"),
-      project.name,
-      "memory",
-      "memory/",
-      files,
-      ["MEMORY.md"] // already collected above
-    );
+    await this._collectDirFiles(join(this.baseDir, project.dirName, "memory"), pn, pd, "memory", "memory/", files, ["MEMORY.md"]);
 
     // CLAUDE.md from project source root
     const claudeMd = await this._readFileIfExists(join(project.projectPath, "CLAUDE.md"));
     if (claudeMd) {
-      files.push({
-        projectName: project.name,
-        fileType: "claude_md",
-        relativePath: "CLAUDE.md",
-        content: claudeMd,
-      });
+      files.push({ projectName: pn, projectDirName: pd, fileType: "claude_md", relativePath: "CLAUDE.md", content: claudeMd });
     }
 
     // README.md from project source root
     const readme = await this._readFileIfExists(join(project.projectPath, "README.md"));
     if (readme) {
-      files.push({
-        projectName: project.name,
-        fileType: "readme",
-        relativePath: "README.md",
-        content: readme,
-      });
+      files.push({ projectName: pn, projectDirName: pd, fileType: "readme", relativePath: "README.md", content: readme });
     }
 
     // .claude/rules/*.md
     const rules = await this.readRuleFiles(project.projectPath);
     for (const rule of rules) {
-      files.push({
-        projectName: project.name,
-        fileType: "rules",
-        relativePath: `.claude/rules/${rule.path}`,
-        content: rule.content,
-      });
+      files.push({ projectName: pn, projectDirName: pd, fileType: "rules", relativePath: `.claude/rules/${rule.path}`, content: rule.content });
     }
 
     // .claude/agent-lessons.md or agent-learnings.md
     for (const name of ["agent-lessons.md", "agent-learnings.md"]) {
-      const content = await this._readFileIfExists(
-        join(project.projectPath, ".claude", name)
-      );
+      const content = await this._readFileIfExists(join(project.projectPath, ".claude", name));
       if (content) {
-        files.push({
-          projectName: project.name,
-          fileType: "agent_lessons",
-          relativePath: `.claude/${name}`,
-          content,
-        });
+        files.push({ projectName: pn, projectDirName: pd, fileType: "agent_lessons", relativePath: `.claude/${name}`, content });
       }
     }
 
     // .claude/skills/**/*.md
-    await this._collectDirFiles(
-      join(project.projectPath, ".claude", "skills"),
-      project.name,
-      "skills",
-      ".claude/skills/",
-      files
-    );
+    await this._collectDirFiles(join(project.projectPath, ".claude", "skills"), pn, pd, "skills", ".claude/skills/", files);
 
     // .claude/commands/**/*.md
-    await this._collectDirFiles(
-      join(project.projectPath, ".claude", "commands"),
-      project.name,
-      "commands",
-      ".claude/commands/",
-      files
-    );
+    await this._collectDirFiles(join(project.projectPath, ".claude", "commands"), pn, pd, "commands", ".claude/commands/", files);
 
     // .claude/launch.json
-    const launchConfig = await this._readFileIfExists(
-      join(project.projectPath, ".claude", "launch.json")
-    );
+    const launchConfig = await this._readFileIfExists(join(project.projectPath, ".claude", "launch.json"));
     if (launchConfig) {
-      files.push({
-        projectName: project.name,
-        fileType: "launch_config",
-        relativePath: ".claude/launch.json",
-        content: launchConfig,
-      });
+      files.push({ projectName: pn, projectDirName: pd, fileType: "launch_config", relativePath: ".claude/launch.json", content: launchConfig });
     }
 
     return files;
@@ -306,6 +256,7 @@ export class ProjectScanner {
   private async _collectDirFiles(
     dirPath: string,
     projectName: string,
+    projectDirName: string,
     fileType: FileType,
     relativePrefix: string,
     results: CollectedFile[],
@@ -320,6 +271,7 @@ export class ProjectScanner {
           await this._collectDirFiles(
             fullPath,
             projectName,
+            projectDirName,
             fileType,
             `${relativePrefix}${entry.name}/`,
             results,
@@ -330,6 +282,7 @@ export class ProjectScanner {
           if (content) {
             results.push({
               projectName,
+              projectDirName,
               fileType,
               relativePath: `${relativePrefix}${entry.name}`,
               content,

@@ -69,8 +69,10 @@ export type LearningCategory =
 export interface Learning {
   /** Auto-generated storage ID */
   id?: number;
-  /** Source project name */
+  /** Source project name (human-readable, for display) */
   projectName: string;
+  /** Stable project directory name (foreign key for joins) */
+  projectDirName: string;
   /** Source type */
   sourceType: LearningSource;
   /** Source file path (relative to project) */
@@ -127,8 +129,10 @@ export type FileType =
 export interface ProjectFile {
   /** Auto-generated storage ID */
   id?: number;
-  /** Source project name */
+  /** Source project name (human-readable, for display) */
   projectName: string;
+  /** Stable project directory name (foreign key for joins) */
+  projectDirName: string;
   /** File type classification */
   fileType: FileType;
   /** Relative path within the project (e.g. ".claude/rules/scanner-trust.md") */

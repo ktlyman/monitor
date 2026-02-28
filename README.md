@@ -10,7 +10,7 @@ in a searchable SQLite database, and serves them through a web UI and MCP server
 - **Deep extraction** -- Extracts per-message token usage, tool invocations, thinking blocks,
   subagent runs, and session analytics with streaming fragment dedup and Opus 4.6 cost estimates
 - **Knowledge extraction** -- Extracts learnings from MEMORY.md files, CLAUDE.md conventions,
-  .claude/rules/, agent-lessons files, and session transcripts
+  .claude/rules/, and agent-lessons files
 - **Full-text search** -- SQLite FTS5-powered search across all collected learnings and thinking blocks
 - **Web dashboard** -- Single-page app with Analytics tab (API requests, token counts, cost estimates,
   top tools), project browser, learning search, and thinking block search
@@ -73,7 +73,7 @@ Add to your Claude Code or Claude Desktop config:
     "monitor": {
       "command": "node",
       "args": ["build/mcp/server.js"],
-      "cwd": "/Users/kevin/Projects/monitor"
+      "cwd": "<path-to-monitor>"
     }
   }
 }

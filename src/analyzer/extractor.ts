@@ -20,14 +20,34 @@ export interface DeepExtractionResult {
   parseErrors: number;
 }
 
-/** Opus 4.6 pricing per million tokens (USD). */
-const COST_PER_M = {
-  input: 5,
-  output: 25,
-  cacheWrite5m: 6.25,
-  cacheWrite1h: 10,
-  cacheRead: 0.5,
-} as const;
+/** Per-model pricing in USD per million tokens. */
+interface ModelPricing {
+  input: number;
+  output: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  cacheRead: number;
+}
+
+const MODEL_PRICING: Record<string, ModelPricing> = {
+  "claude-opus-4-6":           { input: 5,   output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10,  cacheRead: 0.5  },
+  "claude-sonnet-4-20250514":  { input: 3,   output: 15, cacheWrite5m: 3.75, cacheWrite1h: 6,   cacheRead: 0.3  },
+  "claude-haiku-4-5-20251001": { input: 0.8, output: 4,  cacheWrite5m: 1,    cacheWrite1h: 1.6, cacheRead: 0.08 },
+};
+
+/** Default pricing (Opus 4.6) for unknown models. */
+const DEFAULT_PRICING: ModelPricing = MODEL_PRICING["claude-opus-4-6"];
+
+function getPricing(model: string | null): ModelPricing {
+  if (!model) return DEFAULT_PRICING;
+  // Try exact match first
+  if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+  // Try prefix match (e.g. "claude-opus-4-6-20260101" → "claude-opus-4-6")
+  for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
+    if (model.startsWith(key)) return pricing;
+  }
+  return DEFAULT_PRICING;
+}
 
 /**
  * Extracts learnings from collected project data.
@@ -108,9 +128,10 @@ export class LearningExtractor {
   }
 
   /** Extract learnings from a MEMORY.md file. */
-  extractFromMemory(content: string, projectName: string): Learning[] {
+  extractFromMemory(content: string, projectName: string, projectDirName: string): Learning[] {
     return this._splitMarkdownSections(content).map((section) => ({
       projectName,
+      projectDirName,
       sourceType: "memory" as const,
       sourcePath: "memory/MEMORY.md",
       content: section.trim(),
@@ -120,9 +141,10 @@ export class LearningExtractor {
   }
 
   /** Extract learnings from a CLAUDE.md file. */
-  extractFromClaudeMd(content: string, projectName: string): Learning[] {
+  extractFromClaudeMd(content: string, projectName: string, projectDirName: string): Learning[] {
     return this._splitMarkdownSections(content).map((section) => ({
       projectName,
+      projectDirName,
       sourceType: "claude_md" as const,
       sourcePath: "CLAUDE.md",
       content: section.trim(),
@@ -134,7 +156,8 @@ export class LearningExtractor {
   /** Extract learnings from .claude/rules/ files. */
   extractFromRules(
     files: Array<{ path: string; content: string }>,
-    projectName: string
+    projectName: string,
+    projectDirName: string
   ): Learning[] {
     const learnings: Learning[] = [];
     for (const file of files) {
@@ -143,6 +166,7 @@ export class LearningExtractor {
       if (content) {
         learnings.push({
           projectName,
+          projectDirName,
           sourceType: "rules" as const,
           sourcePath: `.claude/rules/${file.path}`,
           content,
@@ -157,10 +181,12 @@ export class LearningExtractor {
   /** Extract learnings from agent-lessons.md or agent-learnings.md. */
   extractFromAgentLessons(
     content: string,
-    projectName: string
+    projectName: string,
+    projectDirName: string
   ): Learning[] {
     return this._splitMarkdownSections(content).map((section) => ({
       projectName,
+      projectDirName,
       sourceType: "agent_lessons" as const,
       sourcePath: ".claude/agent-lessons.md",
       content: section.trim(),
@@ -195,6 +221,7 @@ export class LearningExtractor {
     let apiRequestCount = 0;
     let errorCount = 0;
     let thinkingCharCount = 0;
+    let estimatedCostAccum = 0;
     const toolCounts = new Map<string, number>();
     const modelSet = new Set<string>();
     let firstTimestamp = "";
@@ -274,6 +301,15 @@ export class LearningExtractor {
             totalCacheWrite5mTokens += cacheWrite5m;
             totalCacheWrite1hTokens += cacheWrite1h;
             if (entryType === "assistant") apiRequestCount++;
+
+            // Accumulate cost using per-model pricing
+            const pricing = getPricing(model);
+            estimatedCostAccum +=
+              (inputTokens / 1_000_000) * pricing.input +
+              (outputTokens / 1_000_000) * pricing.output +
+              (cacheWrite5m / 1_000_000) * pricing.cacheWrite5m +
+              (cacheWrite1h / 1_000_000) * pricing.cacheWrite1h +
+              (cacheReadTokens / 1_000_000) * pricing.cacheRead;
           }
 
           messages.push({
@@ -358,13 +394,8 @@ export class LearningExtractor {
       }
     }
 
-    // Compute cost estimate (Opus 4.6 pricing with tiered cache writes)
-    const estimatedCostUsd =
-      (totalInputTokens / 1_000_000) * COST_PER_M.input +
-      (totalOutputTokens / 1_000_000) * COST_PER_M.output +
-      (totalCacheWrite5mTokens / 1_000_000) * COST_PER_M.cacheWrite5m +
-      (totalCacheWrite1hTokens / 1_000_000) * COST_PER_M.cacheWrite1h +
-      (totalCacheReadTokens / 1_000_000) * COST_PER_M.cacheRead;
+    // Cost was accumulated per-message using per-model pricing
+    const estimatedCostUsd = estimatedCostAccum;
 
     // Duration in seconds
     let durationSeconds = 0;
