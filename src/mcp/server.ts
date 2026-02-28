@@ -3,24 +3,18 @@
 /**
  * MCP server for the Monitor meta-learning system.
  *
- * Exposes tools for querying patterns and learnings across all
+ * Exposes 14 tools for querying patterns and learnings across all
  * Claude Code projects. Runs over stdio using JSON-RPC 2.0.
  *
- * Tools:
- * - search_learnings: Full-text search across all extracted learnings
- * - list_projects: List all discovered Claude Code projects
- * - get_project_summary: Get learnings and stats for a specific project
- * - get_stats: Get database-wide statistics
- * - search_thinking: Full-text search across thinking blocks
- * - get_recommendations: Rules-based optimization suggestions
- * - list_project_files: List documentation files for a project
- * - get_file_content: Retrieve full content of a project documentation file
- * - get_tool_success_rates: Per-tool reliability statistics
- * - get_expensive_sessions: Most expensive sessions ranked by cost
- * - get_model_breakdown: Per-model token and message statistics
- * - get_session_analytics: Full analytics for a specific session
- * - get_session_messages: Browse message metadata for a session
- * - search_messages: Full-text search across session message content
+ * Search tools:
+ *   search_learnings, search_thinking, search_messages
+ * Project tools:
+ *   list_projects, get_project_summary, list_project_files, get_file_content
+ * Analytics tools:
+ *   get_stats, get_recommendations, get_tool_success_rates,
+ *   get_expensive_sessions, get_model_breakdown
+ * Session tools:
+ *   get_session_analytics, get_session_messages
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -35,10 +29,33 @@ const DB_PATH = process.env.DB_PATH ?? "monitor.db";
 const db = new MonitorDatabase(DB_PATH);
 const server = new McpServer({ name: "monitor", version: "0.1.0" });
 
+// ---- Response helpers ----
+
+function textResult(text: string) {
+  return { content: [{ type: "text" as const, text }] };
+}
+
+function errorResult(context: string, err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return { content: [{ type: "text" as const, text: `${context}: ${msg}` }], isError: true as const };
+}
+
+function notFound(entity: string, id: string) {
+  return textResult(`No ${entity} found matching "${id}".`);
+}
+
+function emptyResult(entity: string, hint?: string) {
+  return textResult(hint ? `No ${entity} found. ${hint}` : `No ${entity} found.`);
+}
+
+const DEEP_HINT = "Requires deep-extracted sessions — run 'monitor scan --deep'.";
+
 // ---- search_learnings ----
 server.tool(
   "search_learnings",
-  "Full-text search across all extracted learnings from Claude Code projects",
+  "Search learnings extracted from MEMORY.md, CLAUDE.md, and rules files across all projects. " +
+    "Returns project name, source, and matching snippet. " +
+    "Complements search_thinking (reasoning) and search_messages (conversation content).",
   {
     query: z.string().describe("Search query"),
     project: z.string().optional().describe("Filter by project name"),
@@ -56,21 +73,19 @@ server.tool(
         categories: params.category ? [params.category] : undefined,
       });
 
-      if (results.length === 0) {
-        return { content: [{ type: "text" as const, text: "No results found." }] };
-      }
+      if (results.length === 0) return emptyResult("learnings");
 
       const text = results
         .map((r) =>
           `[${r.learning.projectName}] (${r.learning.sourceType}/${r.learning.category})\n` +
-          `  ${r.learning.sourcePath}\n` +
+          `  ${redactPath(r.learning.sourcePath) ?? r.learning.sourcePath}\n` +
           `  ${r.snippet}`
         )
         .join("\n\n");
 
-      return { content: [{ type: "text" as const, text: `${results.length} results:\n\n${text}` }] };
+      return textResult(`${results.length} results:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Search failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Learning search failed", err);
     }
   }
 );
@@ -78,15 +93,13 @@ server.tool(
 // ---- list_projects ----
 server.tool(
   "list_projects",
-  "List all discovered Claude Code projects with session counts and metadata",
+  "List all discovered projects with session counts and documentation flags (hasMemory, hasClaudeMd). " +
+    "Use get_project_summary for details or list_project_files to browse a project's docs.",
   {},
   async () => {
     try {
       const projects = db.getProjects();
-
-      if (projects.length === 0) {
-        return { content: [{ type: "text" as const, text: "No projects found. Run 'monitor scan' first." }] };
-      }
+      if (projects.length === 0) return emptyResult("projects", "Run 'monitor scan' first.");
 
       const text = projects
         .map((p) => {
@@ -98,9 +111,9 @@ server.tool(
         })
         .join("\n");
 
-      return { content: [{ type: "text" as const, text: `${projects.length} projects:\n\n${text}` }] };
+      return textResult(`${projects.length} projects:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to list projects: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to list projects", err);
     }
   }
 );
@@ -108,16 +121,15 @@ server.tool(
 // ---- get_project_summary ----
 server.tool(
   "get_project_summary",
-  "Get learnings, files, and session stats for a specific project",
+  "Get learnings, documentation files, and session stats for a project. " +
+    "Use get_file_content to read specific files, or get_session_analytics for session details.",
   {
     project: z.string().describe("Project name"),
   },
   async (params) => {
     try {
       const project = db.getProjectByName(params.project);
-      if (!project) {
-        return { content: [{ type: "text" as const, text: `Project "${params.project}" not found.` }], isError: true };
-      }
+      if (!project) return notFound("project", params.project);
 
       const learnings = db.getLearningsForProject(project.dirName);
       const files = db.getProjectFiles(project.dirName);
@@ -143,9 +155,9 @@ server.tool(
         }
       }
 
-      return { content: [{ type: "text" as const, text: sections.join("\n") }] };
+      return textResult(sections.join("\n"));
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get project summary: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get project summary", err);
     }
   }
 );
@@ -153,7 +165,8 @@ server.tool(
 // ---- get_stats ----
 server.tool(
   "get_stats",
-  "Get database-wide statistics including project counts, session totals, and analytics",
+  "Database-wide statistics: project counts, session totals, learning breakdowns, and analytics summary. " +
+    "Good starting point for understanding what data is available.",
   {},
   async () => {
     try {
@@ -189,9 +202,9 @@ server.tool(
         lines.push(`  Estimated total cost: $${a.totalEstimatedCostUsd.toFixed(2)}`);
       }
 
-      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      return textResult(lines.join("\n"));
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get stats: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get stats", err);
     }
   }
 );
@@ -199,7 +212,9 @@ server.tool(
 // ---- search_thinking ----
 server.tool(
   "search_thinking",
-  "Full-text search across Claude's thinking blocks from deep-extracted sessions",
+  "Full-text search across Claude's thinking/reasoning blocks. " +
+    "Requires deep-extracted sessions. " +
+    "Complements search_learnings (knowledge) and search_messages (conversation content).",
   {
     query: z.string().describe("Search query"),
     session_id: z.string().optional().describe("Filter by session ID"),
@@ -212,9 +227,7 @@ server.tool(
         limit: params.limit ?? 20,
       });
 
-      if (results.length === 0) {
-        return { content: [{ type: "text" as const, text: "No thinking blocks found matching query." }] };
-      }
+      if (results.length === 0) return emptyResult("thinking blocks", DEEP_HINT);
 
       const text = results
         .map((r) =>
@@ -222,9 +235,9 @@ server.tool(
         )
         .join("\n\n---\n\n");
 
-      return { content: [{ type: "text" as const, text: `${results.length} results:\n\n${text}` }] };
+      return textResult(`${results.length} results:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Thinking search failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Thinking search failed", err);
     }
   }
 );
@@ -232,14 +245,15 @@ server.tool(
 // ---- get_recommendations ----
 server.tool(
   "get_recommendations",
-  "Get optimization recommendations based on analytics data (cost, efficiency, reliability)",
+  "Actionable optimization suggestions based on tool reliability, session cost, and cache efficiency. " +
+    "Requires deep-extracted sessions. Based on data from get_tool_success_rates and get_expensive_sessions.",
   {},
   async () => {
     try {
       const recommendations = generateRecommendations(db);
 
       if (recommendations.length === 0) {
-        return { content: [{ type: "text" as const, text: "No recommendations — everything looks good!" }] };
+        return textResult("No recommendations — everything looks good!");
       }
 
       const text = recommendations
@@ -249,9 +263,9 @@ server.tool(
         })
         .join("\n\n");
 
-      return { content: [{ type: "text" as const, text: `${recommendations.length} recommendations:\n\n${text}` }] };
+      return textResult(`${recommendations.length} recommendations:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get recommendations: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get recommendations", err);
     }
   }
 );
@@ -259,26 +273,23 @@ server.tool(
 // ---- list_project_files ----
 server.tool(
   "list_project_files",
-  "List documentation files (CLAUDE.md, rules, memory, skills, etc.) for a specific project",
+  "List documentation files for a project (CLAUDE.md, rules, memory, skills, etc.). " +
+    "Use get_file_content to read a specific file's contents.",
   {
     project: z.string().describe("Project name"),
   },
   async (params) => {
     try {
       const project = db.getProjectByName(params.project);
-      if (!project) {
-        return { content: [{ type: "text" as const, text: `Project "${params.project}" not found.` }], isError: true };
-      }
+      if (!project) return notFound("project", params.project);
       const files = db.getProjectFiles(project.dirName);
-      if (files.length === 0) {
-        return { content: [{ type: "text" as const, text: `No files found for "${params.project}".` }] };
-      }
+      if (files.length === 0) return emptyResult("files", `No docs collected for "${params.project}".`);
       const text = files
         .map((f) => `${f.relativePath} (${f.fileType}, ${f.sizeBytes}B, updated ${f.lastSeenAt})`)
         .join("\n");
-      return { content: [{ type: "text" as const, text: `${files.length} files:\n\n${text}` }] };
+      return textResult(`${files.length} files:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to list files: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to list files", err);
     }
   }
 );
@@ -286,7 +297,8 @@ server.tool(
 // ---- get_file_content ----
 server.tool(
   "get_file_content",
-  "Retrieve the full content of a documentation file from a project (CLAUDE.md, rules, memory, etc.)",
+  "Retrieve the full content of a documentation file from a project. " +
+    "Use list_project_files to discover available paths.",
   {
     project: z.string().describe("Project name"),
     path: z.string().describe("Relative file path (e.g. 'CLAUDE.md', '.claude/rules/scanner-trust.md')"),
@@ -294,16 +306,12 @@ server.tool(
   async (params) => {
     try {
       const project = db.getProjectByName(params.project);
-      if (!project) {
-        return { content: [{ type: "text" as const, text: `Project "${params.project}" not found.` }], isError: true };
-      }
+      if (!project) return notFound("project", params.project);
       const file = db.getProjectFile(project.dirName, params.path);
-      if (!file) {
-        return { content: [{ type: "text" as const, text: `File "${params.path}" not found in "${params.project}".` }], isError: true };
-      }
-      return { content: [{ type: "text" as const, text: `# ${file.relativePath}\n\n${file.content}` }] };
+      if (!file) return notFound("file", params.path);
+      return textResult(`# ${file.relativePath}\n\n${file.content}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get file: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get file", err);
     }
   }
 );
@@ -311,20 +319,19 @@ server.tool(
 // ---- get_tool_success_rates ----
 server.tool(
   "get_tool_success_rates",
-  "Get per-tool reliability statistics: total calls, errors, and success rate",
+  "Per-tool call counts, error counts, and success rates across all sessions. " +
+    "Requires deep-extracted sessions. Use get_recommendations for actionable suggestions.",
   {},
   async () => {
     try {
       const rates = db.getToolSuccessRates();
-      if (rates.length === 0) {
-        return { content: [{ type: "text" as const, text: "No tool invocation data. Run 'monitor scan --deep' first." }] };
-      }
+      if (rates.length === 0) return emptyResult("tool invocation data", DEEP_HINT);
       const text = rates
         .map((r) => `${r.toolName}: ${r.total} calls, ${r.errors} errors (${(r.successRate * 100).toFixed(1)}% success)`)
         .join("\n");
-      return { content: [{ type: "text" as const, text: `Tool success rates:\n\n${text}` }] };
+      return textResult(`Tool success rates:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get tool rates: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get tool rates", err);
     }
   }
 );
@@ -332,24 +339,23 @@ server.tool(
 // ---- get_expensive_sessions ----
 server.tool(
   "get_expensive_sessions",
-  "Get the most expensive sessions ranked by estimated cost",
+  "Most expensive sessions ranked by estimated API cost (descending). " +
+    "Requires deep-extracted sessions. Use get_session_analytics for full details on a session.",
   {
     limit: z.number().optional().describe("Max results (default 10)"),
   },
   async (params) => {
     try {
       const sessions = db.getMostExpensiveSessions(params.limit ?? 10);
-      if (sessions.length === 0) {
-        return { content: [{ type: "text" as const, text: "No analytics data. Run 'monitor scan --deep' first." }] };
-      }
+      if (sessions.length === 0) return emptyResult("analytics data", DEEP_HINT);
       const text = sessions
         .map((s) =>
           `$${s.estimatedCostUsd.toFixed(2)} — ${s.projectName} (${Math.round(s.durationSeconds / 60)}min, ${s.totalToolUses} tools) ${s.startedAt}`
         )
         .join("\n");
-      return { content: [{ type: "text" as const, text: `Most expensive sessions:\n\n${text}` }] };
+      return textResult(`Most expensive sessions:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get expensive sessions: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get expensive sessions", err);
     }
   }
 );
@@ -357,22 +363,21 @@ server.tool(
 // ---- get_model_breakdown ----
 server.tool(
   "get_model_breakdown",
-  "Get per-model token and message statistics across all sessions",
+  "Per-model token and message statistics across all deep-extracted sessions. " +
+    "Shows which Claude models were used and their token volumes.",
   {},
   async () => {
     try {
       const models = db.getModelStats();
-      if (models.length === 0) {
-        return { content: [{ type: "text" as const, text: "No model data. Run 'monitor scan --deep' first." }] };
-      }
+      if (models.length === 0) return emptyResult("model data", DEEP_HINT);
       const text = models
         .map((m) =>
           `${m.model}: ${m.messageCount} messages, ${m.totalInputTokens.toLocaleString()} input / ${m.totalOutputTokens.toLocaleString()} output tokens`
         )
         .join("\n");
-      return { content: [{ type: "text" as const, text: `Model breakdown:\n\n${text}` }] };
+      return textResult(`Model breakdown:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get model stats: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get model stats", err);
     }
   }
 );
@@ -380,16 +385,15 @@ server.tool(
 // ---- get_session_analytics ----
 server.tool(
   "get_session_analytics",
-  "Get full analytics for a specific session (tokens, cost, tool breakdown, duration, models)",
+  "Full analytics for a specific session: tokens, cost, tool breakdown, duration, and models. " +
+    "Use get_expensive_sessions to find session IDs, or get_session_messages to browse messages.",
   {
     session_id: z.string().describe("Session UUID"),
   },
   async (params) => {
     try {
       const analytics = db.getSessionAnalytics(params.session_id);
-      if (!analytics) {
-        return { content: [{ type: "text" as const, text: `No analytics for session "${params.session_id}". It may not be deep-extracted yet.` }], isError: true };
-      }
+      if (!analytics) return notFound("analytics for session", params.session_id);
       const lines = [
         `Session: ${analytics.sessionId}`,
         `Cost: $${analytics.estimatedCostUsd.toFixed(4)}`,
@@ -410,9 +414,9 @@ server.tool(
           lines.push(`  ${name}: ${count}`);
         }
       }
-      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      return textResult(lines.join("\n"));
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get analytics: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get analytics", err);
     }
   }
 );
@@ -420,7 +424,8 @@ server.tool(
 // ---- get_session_messages ----
 server.tool(
   "get_session_messages",
-  "Browse message metadata for a session (type, model, tokens, timestamps — no content text)",
+  "Browse message metadata for a session: type, model, token counts, and timestamps. " +
+    "Use get_session_analytics for aggregate stats, or search_messages to find specific content.",
   {
     session_id: z.string().describe("Session UUID"),
     entry_type: z.enum(["user", "assistant", "system"]).optional().describe("Filter by message type"),
@@ -432,9 +437,7 @@ server.tool(
         entryType: params.entry_type,
         limit: params.limit ?? 50,
       });
-      if (messages.length === 0) {
-        return { content: [{ type: "text" as const, text: `No messages found for session "${params.session_id}".` }] };
-      }
+      if (messages.length === 0) return emptyResult("messages", `No messages for session "${params.session_id}".`);
       const text = messages
         .map((m) => {
           const tokens = m.inputTokens + m.outputTokens > 0
@@ -445,9 +448,9 @@ server.tool(
           return `${m.timestamp} ${m.entryType}${model}${tokens}${cwd}`;
         })
         .join("\n");
-      return { content: [{ type: "text" as const, text: `${messages.length} messages:\n\n${text}` }] };
+      return textResult(`${messages.length} messages:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Failed to get messages: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Failed to get messages", err);
     }
   }
 );
@@ -455,7 +458,8 @@ server.tool(
 // ---- search_messages ----
 server.tool(
   "search_messages",
-  "Full-text search across session message content from deep-extracted sessions",
+  "Full-text search across conversation content from deep-extracted sessions. " +
+    "Complements search_learnings (knowledge) and search_thinking (reasoning).",
   {
     query: z.string().describe("Search query"),
     session_id: z.string().optional().describe("Filter by session ID"),
@@ -470,9 +474,7 @@ server.tool(
         limit: params.limit ?? 20,
       });
 
-      if (results.length === 0) {
-        return { content: [{ type: "text" as const, text: "No messages found matching query." }] };
-      }
+      if (results.length === 0) return emptyResult("messages", DEEP_HINT);
 
       const text = results
         .map((r) => {
@@ -481,9 +483,9 @@ server.tool(
         })
         .join("\n\n---\n\n");
 
-      return { content: [{ type: "text" as const, text: `${results.length} results:\n\n${text}` }] };
+      return textResult(`${results.length} results:\n\n${text}`);
     } catch (err) {
-      return { content: [{ type: "text" as const, text: `Message search failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+      return errorResult("Message search failed", err);
     }
   }
 );

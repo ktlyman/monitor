@@ -355,41 +355,54 @@
       }
     }
 
-    // ---- Search ----
-    async function doSearch() {
-      var query = document.getElementById('searchInput').value.trim();
+    // ---- Generic search helper ----
+    async function genericSearch(inputId, endpoint, containerId, renderItem, opts) {
+      var query = document.getElementById(inputId).value.trim();
       if (!query) return;
-      var el = document.getElementById('results');
-      var placeholder = document.getElementById('searchPlaceholder');
+      var container = document.getElementById(containerId);
+      var placeholder = opts && opts.placeholderId ? document.getElementById(opts.placeholderId) : null;
       try {
-        var res = await fetch('/api/search', {
+        var res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: query })
+          body: JSON.stringify({ query: query, limit: 20 })
         });
         var data = await res.json();
         if (!data.results || data.results.length === 0) {
-          el.innerHTML = '';
-          placeholder.textContent = 'No results for "' + esc(query) + '"';
+          container.innerHTML = '';
+          var noMsg = 'No results for "' + esc(query) + '"';
+          if (placeholder) { placeholder.textContent = noMsg; }
+          else { container.innerHTML = '<p class="placeholder">' + noMsg + '</p>'; }
           return;
         }
-        placeholder.textContent = '';
-        el.innerHTML = data.results.map(function(r) {
-          return '<li>' +
-            '<div class="meta">' + esc(r.learning.projectName) + ' &middot; ' +
-            esc(r.learning.sourceType) + ' &middot; ' + esc(r.learning.category) +
-            ' &middot; ' + esc(r.learning.sourcePath) + '</div>' +
-            '<div class="snippet">' + r.snippet + '</div>' +
-            '</li>';
-        }).join('');
+        if (placeholder) placeholder.textContent = '';
+        container.innerHTML = data.results.map(renderItem).join('');
       } catch {
-        placeholder.textContent = 'Search failed. Is the server running?';
+        var errMsg = 'Search failed.';
+        if (placeholder) { placeholder.textContent = errMsg; }
+        else { container.innerHTML = '<p class="placeholder">' + errMsg + '</p>'; }
       }
     }
 
-    document.getElementById('searchInput').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') doSearch();
-    });
+    function bindEnterKey(inputId, callback) {
+      document.getElementById(inputId).addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') callback();
+      });
+    }
+
+    // ---- Search ----
+    function doSearch() {
+      genericSearch('searchInput', '/api/search', 'results', function(r) {
+        return '<li>' +
+          '<div class="meta">' + esc(r.learning.projectName) + ' &middot; ' +
+          esc(r.learning.sourceType) + ' &middot; ' + esc(r.learning.category) +
+          ' &middot; ' + esc(r.learning.sourcePath) + '</div>' +
+          '<div class="snippet">' + r.snippet + '</div>' +
+          '</li>';
+      }, { placeholderId: 'searchPlaceholder' });
+    }
+
+    bindEnterKey('searchInput', doSearch);
 
     // ---- Scan ----
     async function runScan() {
@@ -862,67 +875,29 @@
       }
     }
 
-    async function searchThinking() {
-      var query = document.getElementById('thinkingSearchInput').value.trim();
-      if (!query) return;
-      var container = document.getElementById('thinkingResults');
-      try {
-        var res = await fetch('/api/search/thinking', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: query, limit: 20 })
-        });
-        var data = await res.json();
-        if (!data.results || data.results.length === 0) {
-          container.innerHTML = '<p class="placeholder">No thinking blocks match "' + esc(query) + '"</p>';
-          return;
-        }
-        container.innerHTML = data.results.map(function(r) {
-          return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
-            '<div class="ts">' + esc(r.block.sessionId.substring(0, 12)) + ' &middot; ' +
-            esc(new Date(r.block.timestamp).toLocaleString()) + ' &middot; ' +
-            formatNum(r.block.contentLength) + ' chars</div>' +
-            '<div>' + r.snippet + '</div></div>';
-        }).join('');
-      } catch {
-        container.innerHTML = '<p class="placeholder">Search failed.</p>';
-      }
+    function searchThinking() {
+      genericSearch('thinkingSearchInput', '/api/search/thinking', 'thinkingResults', function(r) {
+        return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
+          '<div class="ts">' + esc(r.block.sessionId.substring(0, 12)) + ' &middot; ' +
+          esc(new Date(r.block.timestamp).toLocaleString()) + ' &middot; ' +
+          formatNum(r.block.contentLength) + ' chars</div>' +
+          '<div>' + r.snippet + '</div></div>';
+      });
     }
 
-    document.getElementById('thinkingSearchInput').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') searchThinking();
-    });
+    bindEnterKey('thinkingSearchInput', searchThinking);
 
-    async function searchMessages() {
-      var query = document.getElementById('messageSearchInput').value.trim();
-      if (!query) return;
-      var container = document.getElementById('messageResults');
-      try {
-        var res = await fetch('/api/search/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: query, limit: 20 })
-        });
-        var data = await res.json();
-        if (!data.results || data.results.length === 0) {
-          container.innerHTML = '<p class="placeholder">No messages match "' + esc(query) + '"</p>';
-          return;
-        }
-        container.innerHTML = data.results.map(function(r) {
-          return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
-            '<div class="ts">' + esc(r.projectName) + ' &middot; ' +
-            esc(r.message.entryType) + ' &middot; ' +
-            esc(new Date(r.message.timestamp).toLocaleString()) + '</div>' +
-            '<div>' + r.snippet + '</div></div>';
-        }).join('');
-      } catch {
-        container.innerHTML = '<p class="placeholder">Search failed.</p>';
-      }
+    function searchMessages() {
+      genericSearch('messageSearchInput', '/api/search/messages', 'messageResults', function(r) {
+        return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
+          '<div class="ts">' + esc(r.projectName) + ' &middot; ' +
+          esc(r.message.entryType) + ' &middot; ' +
+          esc(new Date(r.message.timestamp).toLocaleString()) + '</div>' +
+          '<div>' + r.snippet + '</div></div>';
+      });
     }
 
-    document.getElementById('messageSearchInput').addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') searchMessages();
-    });
+    bindEnterKey('messageSearchInput', searchMessages);
 
     loadStats();
   </script>

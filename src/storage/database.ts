@@ -279,6 +279,53 @@ export class MonitorDatabase {
     }
   }
 
+  // ---- Row mappers (centralized camelCase conversion) ----
+
+  private mapSessionMessage(r: Record<string, unknown>): SessionMessage {
+    return {
+      id: r.id as number,
+      sessionId: r.session_id as string,
+      uuid: r.uuid as string,
+      parentUuid: r.parent_uuid as string | null,
+      entryType: r.entry_type as string,
+      timestamp: r.timestamp as string,
+      model: r.model as string | null,
+      stopReason: r.stop_reason as string | null,
+      inputTokens: r.input_tokens as number,
+      outputTokens: r.output_tokens as number,
+      cacheCreationTokens: r.cache_creation_tokens as number,
+      cacheReadTokens: r.cache_read_tokens as number,
+      contentBlockCount: r.content_block_count as number,
+      cwd: r.cwd as string | null,
+      gitBranch: r.git_branch as string | null,
+      content: (r.content as string | null) ?? null,
+    };
+  }
+
+  private mapThinkingBlock(r: Record<string, unknown>): ThinkingBlock {
+    return {
+      id: r.id as number,
+      sessionId: r.session_id as string,
+      messageUuid: r.message_uuid as string,
+      content: r.content as string,
+      contentLength: r.content_length as number,
+      timestamp: r.timestamp as string,
+    };
+  }
+
+  private mapToolInvocation(r: Record<string, unknown>): ToolInvocation {
+    return {
+      id: r.id as number,
+      sessionId: r.session_id as string,
+      messageUuid: r.message_uuid as string,
+      toolUseId: r.tool_use_id as string,
+      toolName: r.tool_name as string,
+      inputSummary: r.input_summary as string,
+      isError: (r.is_error as number) === 1,
+      timestamp: r.timestamp as string,
+    };
+  }
+
   // ---- Project methods ----
 
   upsertProject(project: Project): void {
@@ -899,24 +946,7 @@ export class MonitorDatabase {
       )
       .all(...params) as Array<Record<string, unknown>>;
 
-    return rows.map((r) => ({
-      id: r.id as number,
-      sessionId: r.session_id as string,
-      uuid: r.uuid as string,
-      parentUuid: r.parent_uuid as string | null,
-      entryType: r.entry_type as string,
-      timestamp: r.timestamp as string,
-      model: r.model as string | null,
-      stopReason: r.stop_reason as string | null,
-      inputTokens: r.input_tokens as number,
-      outputTokens: r.output_tokens as number,
-      cacheCreationTokens: r.cache_creation_tokens as number,
-      cacheReadTokens: r.cache_read_tokens as number,
-      contentBlockCount: r.content_block_count as number,
-      cwd: r.cwd as string | null,
-      gitBranch: r.git_branch as string | null,
-      content: (r.content as string | null) ?? null,
-    }));
+    return rows.map((r) => this.mapSessionMessage(r));
   }
 
   /** Get tool invocations for a session. */
@@ -935,16 +965,7 @@ export class MonitorDatabase {
       )
       .all(...params) as Array<Record<string, unknown>>;
 
-    return rows.map((r) => ({
-      id: r.id as number,
-      sessionId: r.session_id as string,
-      messageUuid: r.message_uuid as string,
-      toolUseId: r.tool_use_id as string,
-      toolName: r.tool_name as string,
-      inputSummary: r.input_summary as string,
-      isError: (r.is_error as number) === 1,
-      timestamp: r.timestamp as string,
-    }));
+    return rows.map((r) => this.mapToolInvocation(r));
   }
 
   /** Get thinking blocks for a session. */
@@ -953,14 +974,7 @@ export class MonitorDatabase {
       .prepare("SELECT * FROM thinking_blocks WHERE session_id = ? ORDER BY timestamp")
       .all(sessionId) as Array<Record<string, unknown>>;
 
-    return rows.map((r) => ({
-      id: r.id as number,
-      sessionId: r.session_id as string,
-      messageUuid: r.message_uuid as string,
-      content: r.content as string,
-      contentLength: r.content_length as number,
-      timestamp: r.timestamp as string,
-    }));
+    return rows.map((r) => this.mapThinkingBlock(r));
   }
 
   /** FTS5 search on thinking blocks. */
@@ -986,14 +1000,7 @@ export class MonitorDatabase {
       .all(...params) as Array<Record<string, unknown>>;
 
     return rows.map((r) => ({
-      block: {
-        id: r.id as number,
-        sessionId: r.session_id as string,
-        messageUuid: r.message_uuid as string,
-        content: r.content as string,
-        contentLength: r.content_length as number,
-        timestamp: r.timestamp as string,
-      },
+      block: this.mapThinkingBlock(r),
       snippet: r.snippet as string,
       rank: r.rank as number,
     }));
@@ -1036,24 +1043,7 @@ export class MonitorDatabase {
       .all(...params) as Array<Record<string, unknown>>;
 
     return rows.map((r) => ({
-      message: {
-        id: r.id as number,
-        sessionId: r.session_id as string,
-        uuid: r.uuid as string,
-        parentUuid: r.parent_uuid as string | null,
-        entryType: r.entry_type as string,
-        timestamp: r.timestamp as string,
-        model: r.model as string | null,
-        stopReason: r.stop_reason as string | null,
-        inputTokens: r.input_tokens as number,
-        outputTokens: r.output_tokens as number,
-        cacheCreationTokens: r.cache_creation_tokens as number,
-        cacheReadTokens: r.cache_read_tokens as number,
-        contentBlockCount: r.content_block_count as number,
-        cwd: r.cwd as string | null,
-        gitBranch: r.git_branch as string | null,
-        content: r.content as string | null,
-      },
+      message: this.mapSessionMessage(r),
       projectName: r.project_name as string,
       snippet: r.snippet as string,
       rank: r.rank as number,

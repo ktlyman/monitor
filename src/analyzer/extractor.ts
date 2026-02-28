@@ -86,6 +86,20 @@ function extractContentText(contentBlocks: Record<string, unknown>[]): string | 
     : combined;
 }
 
+/**
+ * Detect streaming fragments: consecutive assistant entries chained via parentUuid
+ * share identical token usage (same API response). Returns true for non-root entries.
+ */
+function isStreamingFragment(
+  entryType: string,
+  parentUuid: string | null,
+  lastAssistantUuid: string
+): boolean {
+  return entryType === "assistant"
+    && parentUuid === lastAssistantUuid
+    && lastAssistantUuid !== "";
+}
+
 /** Extract content from a user message entry (handles both string and array formats). */
 function extractUserContent(entry: Record<string, unknown>): string | null {
   const message = entry.message as Record<string, unknown> | undefined;
@@ -143,10 +157,7 @@ export class LearningExtractor {
         if (type === "assistant") {
           const uuid = (entry.uuid as string) ?? "";
           const parentUuid = (entry.parentUuid as string) ?? "";
-          // Streaming fragment detection: consecutive assistant entries
-          // chained via parentUuid share identical usage (same API response)
-          const isFragment = parentUuid === lastAssistantUuid && lastAssistantUuid !== "";
-          if (!isFragment) assistantCount++;
+          if (!isStreamingFragment(type, parentUuid, lastAssistantUuid)) assistantCount++;
           lastAssistantUuid = uuid;
           // Count tool_use blocks from ALL entries (each fragment has unique blocks)
           const message = entry.message as Record<string, unknown> | undefined;
@@ -281,9 +292,6 @@ export class LearningExtractor {
     let lastTimestamp = "";
     let parseErrors = 0;
 
-    // Streaming fragment detection: consecutive assistant entries chained
-    // via parentUuid share identical usage (same API response). Only count
-    // tokens from the first entry in each group.
     let lastAssistantUuid = "";
 
     const rl = createInterface({
@@ -333,12 +341,7 @@ export class LearningExtractor {
           const cwd = (entry.cwd as string) ?? null;
           const gitBranch = (entry.gitBranch as string) ?? null;
 
-          // Detect streaming fragments: consecutive assistant entries chained
-          // via parentUuid are part of the same API response with identical usage.
-          // Only accumulate tokens from the root entry (first in the chain).
-          const isStreamingFragment = entryType === "assistant"
-            && parentUuid === lastAssistantUuid
-            && lastAssistantUuid !== "";
+          const isFragment = isStreamingFragment(entryType, parentUuid, lastAssistantUuid);
 
           if (entryType === "assistant") {
             lastAssistantUuid = uuid;
@@ -346,7 +349,7 @@ export class LearningExtractor {
             lastAssistantUuid = "";
           }
 
-          if (!isStreamingFragment) {
+          if (!isFragment) {
             totalInputTokens += inputTokens;
             totalOutputTokens += outputTokens;
             totalCacheCreationTokens += cacheCreationTokens;
@@ -378,10 +381,10 @@ export class LearningExtractor {
             timestamp: ts,
             model,
             stopReason,
-            inputTokens: isStreamingFragment ? 0 : inputTokens,
-            outputTokens: isStreamingFragment ? 0 : outputTokens,
-            cacheCreationTokens: isStreamingFragment ? 0 : cacheCreationTokens,
-            cacheReadTokens: isStreamingFragment ? 0 : cacheReadTokens,
+            inputTokens: isFragment ? 0 : inputTokens,
+            outputTokens: isFragment ? 0 : outputTokens,
+            cacheCreationTokens: isFragment ? 0 : cacheCreationTokens,
+            cacheReadTokens: isFragment ? 0 : cacheReadTokens,
             contentBlockCount: contentBlocks.length,
             cwd,
             gitBranch,
@@ -535,11 +538,7 @@ export class LearningExtractor {
 
           const uuid = (entry.uuid as string) ?? "";
           const parentUuid = (entry.parentUuid as string) ?? "";
-
-          // Streaming fragment detection (same as extractSessionDeep)
-          const isFragment = entryType === "assistant"
-            && parentUuid === lastAssistantUuid
-            && lastAssistantUuid !== "";
+          const isFragment = isStreamingFragment(entryType, parentUuid, lastAssistantUuid);
 
           if (entryType === "assistant") {
             lastAssistantUuid = uuid;
