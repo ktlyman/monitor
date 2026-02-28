@@ -37,9 +37,27 @@
       line-height: 1.6;
     }
     h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-    .subtitle { color: var(--muted); margin-bottom: 2rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+
+    /* Tabs */
+    .tabs {
+      display: flex; gap: 0; margin-bottom: 1.5rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab {
+      padding: 0.5rem 1.25rem; cursor: pointer;
+      border: none; background: none; color: var(--muted);
+      font-size: 0.95rem; border-bottom: 2px solid transparent;
+      margin-bottom: -2px; font-family: inherit;
+    }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab:hover { color: var(--fg); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Search */
     .search-box {
-      display: flex; gap: 0.5rem; margin-bottom: 2rem;
+      display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
     }
     .search-box input {
       flex: 1; padding: 0.5rem 0.75rem;
@@ -47,15 +65,17 @@
       background: var(--card-bg); color: var(--fg);
       font-size: 0.95rem;
     }
-    .search-box button {
+    .search-box button, .btn {
       padding: 0.5rem 1.25rem;
       background: var(--accent); color: #fff; border: none;
       border-radius: var(--radius); cursor: pointer;
       font-size: 0.95rem;
     }
+
+    /* Stats */
     .stats {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1rem; margin-bottom: 2rem;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 1rem; margin-bottom: 1.5rem;
     }
     .stat-card {
       background: var(--card-bg); border: 1px solid var(--border);
@@ -63,6 +83,8 @@
     }
     .stat-card .value { font-size: 1.75rem; font-weight: 700; color: var(--accent); }
     .stat-card .label { color: var(--muted); font-size: 0.85rem; }
+
+    /* Results list */
     .results { list-style: none; }
     .results li {
       background: var(--card-bg); border: 1px solid var(--border);
@@ -72,58 +94,267 @@
     .results .snippet { font-size: 0.9rem; }
     .results .snippet b { color: var(--accent); }
     .placeholder { color: var(--muted); font-style: italic; margin-top: 2rem; text-align: center; }
+
+    /* File browser */
+    .project-list {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem; margin-bottom: 1.5rem;
+    }
+    .project-card {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0.75rem;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .project-card:hover { border-color: var(--accent); }
+    .project-card.active { border-color: var(--accent); background: var(--accent-bg); }
+    .project-card .name { font-weight: 600; font-size: 0.95rem; }
+    .project-card .count { color: var(--muted); font-size: 0.8rem; }
+
+    .file-list { list-style: none; margin-bottom: 1rem; }
+    .file-list li {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer; display: flex; justify-content: space-between;
+      align-items: center; font-size: 0.9rem;
+    }
+    .file-list li:hover { background: var(--accent-bg); }
+    .file-list li .file-path { font-family: monospace; font-size: 0.85rem; }
+    .file-list li .file-type {
+      color: var(--muted); font-size: 0.75rem;
+      background: var(--code-bg); padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+    }
+
+    .file-viewer {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); margin-top: 1rem;
+    }
+    .file-viewer-header {
+      padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .file-viewer-header .path { font-family: monospace; font-size: 0.85rem; font-weight: 600; }
+    .file-viewer-header .info { color: var(--muted); font-size: 0.8rem; }
+    .file-viewer pre {
+      padding: 1rem; overflow-x: auto;
+      font-size: 0.85rem; line-height: 1.5;
+      background: var(--code-bg); margin: 0;
+      border-radius: 0 0 var(--radius) var(--radius);
+      max-height: 600px; overflow-y: auto;
+    }
+    .back-link {
+      color: var(--accent); cursor: pointer; font-size: 0.9rem;
+      margin-bottom: 1rem; display: inline-block;
+    }
+    .back-link:hover { text-decoration: underline; }
+
+    .version-list { list-style: none; margin-top: 0.75rem; }
+    .version-list li {
+      padding: 0.4rem 0.75rem; font-size: 0.8rem; color: var(--muted);
+      border-left: 2px solid var(--border); margin-left: 0.5rem;
+      cursor: pointer;
+    }
+    .version-list li:hover { color: var(--fg); border-left-color: var(--accent); }
+    .version-list li.current { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+
+    .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
+    .scan-controls { display: flex; gap: 0.5rem; align-items: center; }
+    .btn-scan {
+      padding: 0.4rem 1rem; background: var(--card-bg); color: var(--fg);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      cursor: pointer; font-size: 0.85rem; font-family: inherit;
+    }
+    .btn-scan:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-scan:disabled { opacity: 0.5; cursor: not-allowed; }
+    .scan-result {
+      font-size: 0.8rem; color: var(--muted); margin-bottom: 1rem;
+      padding: 0.5rem 0.75rem; background: var(--accent-bg);
+      border-radius: var(--radius); display: none;
+    }
+    .deep-label { font-size: 0.8rem; color: var(--muted); cursor: pointer; user-select: none; }
+    .deep-label input { vertical-align: middle; }
+
+    /* Analytics */
+    .analytics-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem; margin-bottom: 1.5rem;
+    }
+    .analytics-card {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0.75rem; text-align: center;
+    }
+    .analytics-card .value { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+    .analytics-card .label { color: var(--muted); font-size: 0.8rem; }
+
+    .bar-chart { margin-bottom: 1.5rem; }
+    .bar-chart h3 { font-size: 0.95rem; margin-bottom: 0.75rem; }
+    .bar-row {
+      display: flex; align-items: center; margin-bottom: 0.35rem;
+      font-size: 0.85rem;
+    }
+    .bar-label { width: 140px; text-align: right; padding-right: 0.75rem; color: var(--muted); font-family: monospace; font-size: 0.8rem; }
+    .bar-fill {
+      height: 18px; background: var(--accent); border-radius: 2px;
+      min-width: 2px; transition: width 0.3s;
+    }
+    .bar-count { margin-left: 0.5rem; color: var(--muted); font-size: 0.8rem; }
+
+    .session-browser { margin-top: 1rem; }
+    .session-list { list-style: none; }
+    .session-item {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 0.75rem; margin-bottom: 0.5rem;
+      cursor: pointer; transition: border-color 0.15s;
+    }
+    .session-item:hover { border-color: var(--accent); }
+    .session-item .session-header { display: flex; justify-content: space-between; align-items: center; }
+    .session-item .session-id { font-family: monospace; font-size: 0.8rem; color: var(--muted); }
+    .session-item .session-date { font-size: 0.85rem; font-weight: 600; }
+    .session-item .session-stats { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+    .session-detail { margin-top: 1rem; }
+    .detail-section { margin-bottom: 1.5rem; }
+    .detail-section h4 { font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--muted); }
+    .token-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 0.5rem;
+    }
+    .token-card {
+      background: var(--code-bg); border-radius: var(--radius);
+      padding: 0.5rem; text-align: center; font-size: 0.8rem;
+    }
+    .token-card .value { font-weight: 700; font-size: 1rem; }
+    .thinking-block-item {
+      background: var(--code-bg); border-radius: var(--radius);
+      padding: 0.75rem; margin-bottom: 0.5rem; font-size: 0.8rem;
+      max-height: 150px; overflow-y: auto; cursor: pointer;
+    }
+    .thinking-block-item.expanded { max-height: none; }
+    .thinking-block-item .ts { color: var(--muted); font-size: 0.75rem; margin-bottom: 0.25rem; }
+
+    .thinking-search-box { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .thinking-search-box input {
+      flex: 1; padding: 0.4rem 0.6rem; border: 1px solid var(--border);
+      border-radius: var(--radius); background: var(--card-bg); color: var(--fg);
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
-  <h1>Monitor</h1>
+  <div class="header-row">
+    <h1>Monitor</h1>
+    <div class="scan-controls">
+      <label class="deep-label"><input type="checkbox" id="deepScan"> Deep</label>
+      <button class="btn-scan" id="scanBtn" onclick="runScan()">Scan Projects</button>
+    </div>
+  </div>
   <p class="subtitle">Claude Code meta-learning dashboard</p>
 
-  <div class="search-box">
-    <input type="text" id="searchInput" placeholder="Search learnings..." autofocus>
-    <button onclick="doSearch()">Search</button>
+  <div class="scan-result" id="scanResult"></div>
+  <div class="stats" id="stats"></div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('search')">Search</button>
+    <button class="tab" onclick="switchTab('files')">Files</button>
+    <button class="tab" onclick="switchTab('analytics')">Analytics</button>
   </div>
 
-  <div class="stats" id="stats"></div>
-  <ul class="results" id="results"></ul>
-  <p class="placeholder" id="placeholder">Loading...</p>
+  <!-- Search tab -->
+  <div class="tab-content active" id="tab-search">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search learnings..." autofocus>
+      <button onclick="doSearch()">Search</button>
+    </div>
+    <ul class="results" id="results"></ul>
+    <p class="placeholder" id="searchPlaceholder">Search above to explore learnings.</p>
+  </div>
+
+  <!-- Files tab -->
+  <div class="tab-content" id="tab-files">
+    <div id="filesView">
+      <div class="project-list" id="projectList"></div>
+      <div id="fileListContainer"></div>
+    </div>
+    <p class="placeholder" id="filesPlaceholder">Loading projects...</p>
+  </div>
+
+  <!-- Analytics tab -->
+  <div class="tab-content" id="tab-analytics">
+    <div id="analyticsContainer">
+      <div class="analytics-grid" id="analyticsSummary"></div>
+      <div id="toolChart"></div>
+      <div id="thinkingSearch">
+        <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Search Thinking Blocks</h3>
+        <div class="thinking-search-box">
+          <input type="text" id="thinkingSearchInput" placeholder="Search Claude's thinking...">
+          <button class="btn" onclick="searchThinking()">Search</button>
+        </div>
+        <div id="thinkingResults"></div>
+      </div>
+      <div class="session-browser" id="sessionBrowser">
+        <h3 style="font-size:0.95rem;margin-bottom:0.75rem">Sessions by Project</h3>
+        <div class="project-list" id="analyticsProjectList"></div>
+        <div id="sessionListContainer"></div>
+        <div id="sessionDetailContainer"></div>
+      </div>
+    </div>
+    <p class="placeholder" id="analyticsPlaceholder"></p>
+  </div>
 
   <script>
     /** Escape HTML to prevent XSS from scanned content. */
     function esc(str) {
-      const div = document.createElement('div');
+      var div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
     }
 
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // ---- Tab switching ----
+    function switchTab(name) {
+      document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+      document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
+      document.querySelector('.tab-content#tab-' + name).classList.add('active');
+      document.querySelectorAll('.tab').forEach(function(t) {
+        if (t.textContent.toLowerCase() === name) t.classList.add('active');
+      });
+      if (name === 'files' && !filesLoaded) loadProjects();
+      if (name === 'analytics' && !analyticsLoaded) loadAnalytics();
+    }
+
+    // ---- Stats ----
     async function loadStats() {
       try {
-        const res = await fetch('/api/stats');
+        var res = await fetch('/api/stats');
         if (!res.ok) throw new Error('API not available');
-        const data = await res.json();
-        const el = document.getElementById('stats');
+        var data = await res.json();
+        var el = document.getElementById('stats');
         el.innerHTML =
           '<div class="stat-card"><div class="value">' + data.totalProjects + '</div><div class="label">Projects</div></div>' +
           '<div class="stat-card"><div class="value">' + data.totalSessions + '</div><div class="label">Sessions</div></div>' +
           '<div class="stat-card"><div class="value">' + data.totalLearnings + '</div><div class="label">Learnings</div></div>';
-        document.getElementById('placeholder').textContent =
-          data.totalLearnings > 0 ? 'Search above to explore learnings.' : 'No learnings yet. Run: npm run dev -- scan';
       } catch {
-        document.getElementById('placeholder').textContent = 'API not available. Start server with: npm run serve:dev';
+        document.getElementById('stats').innerHTML = '';
       }
     }
 
+    // ---- Search ----
     async function doSearch() {
-      const query = document.getElementById('searchInput').value.trim();
+      var query = document.getElementById('searchInput').value.trim();
       if (!query) return;
-      const el = document.getElementById('results');
-      const placeholder = document.getElementById('placeholder');
+      var el = document.getElementById('results');
+      var placeholder = document.getElementById('searchPlaceholder');
       try {
-        const res = await fetch('/api/search', {
+        var res = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query })
+          body: JSON.stringify({ query: query })
         });
-        const data = await res.json();
+        var data = await res.json();
         if (!data.results || data.results.length === 0) {
           el.innerHTML = '';
           placeholder.textContent = 'No results for "' + esc(query) + '"';
@@ -145,6 +376,404 @@
 
     document.getElementById('searchInput').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') doSearch();
+    });
+
+    // ---- Scan ----
+    async function runScan() {
+      var btn = document.getElementById('scanBtn');
+      var resultEl = document.getElementById('scanResult');
+      var deep = document.getElementById('deepScan').checked;
+      btn.disabled = true;
+      btn.textContent = deep ? 'Deep Scanning...' : 'Scanning...';
+      resultEl.style.display = 'none';
+      try {
+        var res = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deep: deep })
+        });
+        var data = await res.json();
+        var msg = 'Scan complete: ' + data.projects + ' projects, ' +
+          data.sessions + ' sessions, ' + data.learnings + ' learnings, ' +
+          data.files + ' files (' + data.filesChanged + ' changed)';
+        if (data.deep) {
+          msg += ' | Deep: ' + data.deep.sessions + ' sessions, ' +
+            data.deep.messages + ' messages, ' + data.deep.tools + ' tools, ' +
+            data.deep.thinking + ' thinking blocks';
+        }
+        msg += ' in ' + data.durationMs + 'ms';
+        resultEl.textContent = msg;
+        resultEl.style.display = 'block';
+        loadStats();
+        filesLoaded = false;
+        analyticsLoaded = false;
+        if (document.getElementById('tab-files').classList.contains('active')) loadProjects();
+        if (document.getElementById('tab-analytics').classList.contains('active')) loadAnalytics();
+      } catch {
+        resultEl.textContent = 'Scan failed. Is the server running?';
+        resultEl.style.display = 'block';
+      }
+      btn.disabled = false;
+      btn.textContent = 'Scan Projects';
+    }
+
+    // ---- File browser ----
+    var filesLoaded = false;
+    var selectedProject = null;
+
+    async function loadProjects() {
+      var placeholder = document.getElementById('filesPlaceholder');
+      try {
+        var res = await fetch('/api/projects');
+        var data = await res.json();
+        filesLoaded = true;
+        if (!data.projects || data.projects.length === 0) {
+          placeholder.textContent = 'No projects found. Run: npm run dev -- scan';
+          return;
+        }
+        placeholder.textContent = '';
+        var el = document.getElementById('projectList');
+        el.innerHTML = data.projects.map(function(p) {
+          return '<div class="project-card" onclick="selectProject(\'' + esc(p.name) + '\')">' +
+            '<div class="name">' + esc(p.name) + '</div>' +
+            '<div class="count">' + p.fileCount + ' files &middot; ' + p.sessionCount + ' sessions</div>' +
+            '</div>';
+        }).join('');
+      } catch {
+        placeholder.textContent = 'Failed to load projects.';
+      }
+    }
+
+    async function selectProject(name) {
+      selectedProject = name;
+      // Highlight active project card
+      document.querySelectorAll('.project-card').forEach(function(c) {
+        c.classList.toggle('active', c.querySelector('.name').textContent === name);
+      });
+
+      var container = document.getElementById('fileListContainer');
+      var placeholder = document.getElementById('filesPlaceholder');
+      try {
+        var res = await fetch('/api/files/' + encodeURIComponent(name));
+        var data = await res.json();
+        if (!data.files || data.files.length === 0) {
+          container.innerHTML = '';
+          placeholder.textContent = 'No files collected for ' + esc(name) + '. Run: npm run dev -- scan';
+          return;
+        }
+        placeholder.textContent = '';
+        container.innerHTML = '<ul class="file-list">' +
+          data.files.map(function(f) {
+            return '<li onclick="viewFile(\'' + esc(selectedProject) + '\', \'' + esc(f.relativePath) + '\')">' +
+              '<span class="file-path">' + esc(f.relativePath) + '</span>' +
+              '<span><span class="file-type">' + esc(f.fileType) + '</span> ' +
+              '<span style="color:var(--muted);font-size:0.75rem">' + formatBytes(f.sizeBytes) + '</span></span>' +
+              '</li>';
+          }).join('') +
+          '</ul>';
+      } catch {
+        placeholder.textContent = 'Failed to load files.';
+      }
+    }
+
+    async function viewFile(projectName, relativePath) {
+      var container = document.getElementById('fileListContainer');
+      try {
+        var res = await fetch('/api/files/' + encodeURIComponent(projectName) + '/content?path=' + encodeURIComponent(relativePath));
+        var data = await res.json();
+        if (!data.file) {
+          container.innerHTML = '<p class="placeholder">File not found.</p>';
+          return;
+        }
+        var f = data.file;
+        var firstSeen = new Date(f.firstSeenAt).toLocaleDateString();
+        var lastSeen = new Date(f.lastSeenAt).toLocaleDateString();
+
+        container.innerHTML =
+          '<span class="back-link" onclick="selectProject(\'' + esc(projectName) + '\')">&larr; Back to file list</span>' +
+          '<div class="file-viewer">' +
+            '<div class="file-viewer-header">' +
+              '<span class="path">' + esc(f.relativePath) + '</span>' +
+              '<span class="info">' + formatBytes(f.sizeBytes) + ' &middot; first seen ' + esc(firstSeen) + ' &middot; last seen ' + esc(lastSeen) + '</span>' +
+            '</div>' +
+            '<pre>' + esc(f.content) + '</pre>' +
+          '</div>' +
+          '<div id="versionContainer"></div>';
+
+        loadVersions(projectName, relativePath, f.id);
+      } catch {
+        container.innerHTML = '<p class="placeholder">Failed to load file content.</p>';
+      }
+    }
+
+    async function loadVersions(projectName, relativePath, fileId) {
+      var container = document.getElementById('versionContainer');
+      try {
+        var res = await fetch('/api/files/' + encodeURIComponent(projectName) + '/versions?path=' + encodeURIComponent(relativePath));
+        var data = await res.json();
+        if (!data.versions || data.versions.length <= 1) {
+          container.innerHTML = '';
+          return;
+        }
+        container.innerHTML = '<h3 style="font-size:0.9rem;margin-top:1rem;margin-bottom:0.5rem">Version History (' + data.versions.length + ')</h3>' +
+          '<ul class="version-list">' +
+          data.versions.map(function(v, i) {
+            var date = new Date(v.recordedAt).toLocaleString();
+            return '<li class="' + (i === 0 ? 'current' : '') + '" onclick="showVersion(' + v.id + ', \'' + esc(relativePath) + '\')">' +
+              esc(date) + ' &middot; ' + formatBytes(v.sizeBytes) + ' &middot; ' + esc(v.contentHash.substring(0, 8)) +
+              (i === 0 ? ' (current)' : '') +
+              '</li>';
+          }).join('') +
+          '</ul>';
+      } catch {
+        // Version loading is non-critical
+      }
+    }
+
+    async function showVersion(versionId, relativePath) {
+      // For now, just highlight the selected version
+      // Future: show diff between versions
+    }
+
+    // ---- Analytics ----
+    var analyticsLoaded = false;
+    var analyticsProjects = [];
+
+    function formatNum(n) {
+      if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    function formatCost(usd) {
+      return '$' + usd.toFixed(2);
+    }
+
+    function formatDuration(seconds) {
+      if (seconds < 60) return Math.round(seconds) + 's';
+      if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+      return (seconds / 3600).toFixed(1) + 'h';
+    }
+
+    async function loadAnalytics() {
+      var placeholder = document.getElementById('analyticsPlaceholder');
+      try {
+        var res = await fetch('/api/analytics/summary');
+        var data = await res.json();
+        analyticsLoaded = true;
+
+        if (!data.analytics) {
+          placeholder.textContent = 'No analytics data yet. Run a deep scan first (check "Deep" next to Scan Projects).';
+          document.getElementById('analyticsContainer').style.display = 'none';
+          return;
+        }
+        placeholder.textContent = '';
+        document.getElementById('analyticsContainer').style.display = 'block';
+        var a = data.analytics;
+
+        // Summary cards
+        document.getElementById('analyticsSummary').innerHTML =
+          '<div class="analytics-card"><div class="value">' + formatNum(a.totalApiRequests || 0) + '</div><div class="label">API Requests</div></div>' +
+          '<div class="analytics-card"><div class="value">' + formatNum(a.totalToolInvocations) + '</div><div class="label">Tool Invocations</div></div>' +
+          '<div class="analytics-card"><div class="value">' + formatNum(a.totalThinkingBlocks) + '</div><div class="label">Thinking Blocks</div></div>' +
+          '<div class="analytics-card"><div class="value">' + formatNum(a.totalInputTokens) + '</div><div class="label">Input Tokens</div></div>' +
+          '<div class="analytics-card"><div class="value">' + formatNum(a.totalOutputTokens) + '</div><div class="label">Output Tokens</div></div>' +
+          '<div class="analytics-card"><div class="value">' + formatNum(a.totalCacheReadTokens || 0) + '</div><div class="label">Cache Read</div></div>' +
+          '<div class="analytics-card"><div class="value">' + formatCost(a.totalEstimatedCostUsd) + '</div><div class="label">Est. API Cost</div></div>' +
+          '<div class="analytics-card"><div class="value">' + a.sessionsDeepExtracted + '</div><div class="label">Sessions</div></div>';
+
+        // Tool usage bar chart
+        if (a.topTools && a.topTools.length > 0) {
+          var maxCount = a.topTools[0].count;
+          var bars = a.topTools.map(function(t) {
+            var pct = Math.max(2, (t.count / maxCount) * 100);
+            return '<div class="bar-row">' +
+              '<span class="bar-label">' + esc(t.name) + '</span>' +
+              '<div class="bar-fill" style="width:' + pct + '%"></div>' +
+              '<span class="bar-count">' + formatNum(t.count) + '</span>' +
+              '</div>';
+          }).join('');
+          document.getElementById('toolChart').innerHTML = '<div class="bar-chart"><h3>Top Tools</h3>' + bars + '</div>';
+        }
+
+        // Load projects for the session browser
+        loadAnalyticsProjects();
+      } catch {
+        placeholder.textContent = 'Failed to load analytics.';
+      }
+    }
+
+    async function loadAnalyticsProjects() {
+      try {
+        var res = await fetch('/api/projects');
+        var data = await res.json();
+        analyticsProjects = data.projects || [];
+        var el = document.getElementById('analyticsProjectList');
+        el.innerHTML = analyticsProjects.map(function(p) {
+          return '<div class="project-card" onclick="loadProjectSessions(\'' + esc(p.dirName) + '\', \'' + esc(p.name) + '\')">' +
+            '<div class="name">' + esc(p.name) + '</div>' +
+            '<div class="count">' + p.sessionCount + ' sessions</div>' +
+            '</div>';
+        }).join('');
+      } catch {
+        // Non-critical
+      }
+    }
+
+    async function loadProjectSessions(dirName, name) {
+      // Highlight active
+      document.querySelectorAll('#analyticsProjectList .project-card').forEach(function(c) {
+        c.classList.toggle('active', c.querySelector('.name').textContent === name);
+      });
+
+      var container = document.getElementById('sessionListContainer');
+      document.getElementById('sessionDetailContainer').innerHTML = '';
+      try {
+        var res = await fetch('/api/sessions/project/' + encodeURIComponent(dirName));
+        var data = await res.json();
+        if (!data.sessions || data.sessions.length === 0) {
+          container.innerHTML = '<p class="placeholder">No sessions found.</p>';
+          return;
+        }
+        container.innerHTML = '<ul class="session-list">' +
+          data.sessions.map(function(s) {
+            var date = s.startedAt ? new Date(s.startedAt).toLocaleString() : 'Unknown';
+            var stats = s.userMessageCount + ' user msgs, ' + s.toolUseCount + ' tools, ' + formatBytes(s.fileSizeBytes);
+            if (s.analytics) {
+              stats += ' | ' + formatCost(s.analytics.estimatedCostUsd) + ', ' +
+                formatNum(s.analytics.totalInputTokens + s.analytics.totalOutputTokens) + ' tokens';
+            }
+            return '<div class="session-item" onclick="loadSessionDetail(\'' + esc(s.sessionId) + '\')">' +
+              '<div class="session-header">' +
+                '<span class="session-date">' + esc(date) + '</span>' +
+                '<span class="session-id">' + esc(s.sessionId.substring(0, 12)) + '...</span>' +
+              '</div>' +
+              '<div class="session-stats">' + esc(stats) + '</div>' +
+              '</div>';
+          }).join('') +
+          '</ul>';
+      } catch {
+        container.innerHTML = '<p class="placeholder">Failed to load sessions.</p>';
+      }
+    }
+
+    async function loadSessionDetail(sessionId) {
+      var container = document.getElementById('sessionDetailContainer');
+      container.innerHTML = '<p class="placeholder">Loading session...</p>';
+
+      try {
+        var [analyticsRes, toolsRes, thinkingRes, subagentsRes] = await Promise.all([
+          fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/analytics'),
+          fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/tools'),
+          fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/thinking'),
+          fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/subagents'),
+        ]);
+
+        var html = '<div class="session-detail">' +
+          '<span class="back-link" onclick="document.getElementById(\'sessionDetailContainer\').innerHTML=\'\'">&larr; Back to sessions</span>';
+
+        // Token breakdown
+        if (analyticsRes.ok) {
+          var aData = await analyticsRes.json();
+          var a = aData.analytics;
+          html += '<div class="detail-section"><h4>Token Usage</h4>' +
+            '<div class="token-grid">' +
+            '<div class="token-card"><div class="value">' + formatNum(a.totalInputTokens) + '</div>Input</div>' +
+            '<div class="token-card"><div class="value">' + formatNum(a.totalOutputTokens) + '</div>Output</div>' +
+            '<div class="token-card"><div class="value">' + formatNum(a.totalCacheCreationTokens) + '</div>Cache Create</div>' +
+            '<div class="token-card"><div class="value">' + formatNum(a.totalCacheReadTokens) + '</div>Cache Read</div>' +
+            '<div class="token-card"><div class="value">' + formatCost(a.estimatedCostUsd) + '</div>Cost</div>' +
+            '<div class="token-card"><div class="value">' + formatDuration(a.durationSeconds) + '</div>Duration</div>' +
+            '</div></div>';
+
+          // Session tool breakdown
+          if (a.toolBreakdown && Object.keys(a.toolBreakdown).length > 0) {
+            var tools = Object.entries(a.toolBreakdown).sort(function(x, y) { return y[1] - x[1]; });
+            var maxT = tools[0][1];
+            html += '<div class="detail-section"><h4>Tool Usage (' + a.totalToolUses + ' total, ' + a.errorCount + ' errors)</h4>';
+            html += tools.map(function(t) {
+              var pct = Math.max(2, (t[1] / maxT) * 100);
+              return '<div class="bar-row"><span class="bar-label">' + esc(t[0]) + '</span>' +
+                '<div class="bar-fill" style="width:' + pct + '%"></div>' +
+                '<span class="bar-count">' + t[1] + '</span></div>';
+            }).join('');
+            html += '</div>';
+          }
+
+          if (a.models) {
+            html += '<div class="detail-section"><h4>Models</h4><p style="font-size:0.85rem;color:var(--muted)">' + esc(a.models) + '</p></div>';
+          }
+        }
+
+        // Thinking blocks
+        if (thinkingRes.ok) {
+          var tData = await thinkingRes.json();
+          if (tData.blocks && tData.blocks.length > 0) {
+            html += '<div class="detail-section"><h4>Thinking Blocks (' + tData.blocks.length + ')</h4>';
+            html += tData.blocks.slice(0, 20).map(function(b) {
+              var preview = b.content.length > 300 ? b.content.substring(0, 300) + '...' : b.content;
+              return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
+                '<div class="ts">' + esc(new Date(b.timestamp).toLocaleTimeString()) + ' &middot; ' + formatNum(b.contentLength) + ' chars</div>' +
+                '<div>' + esc(preview) + '</div></div>';
+            }).join('');
+            if (tData.blocks.length > 20) {
+              html += '<p style="font-size:0.8rem;color:var(--muted)">Showing 20 of ' + tData.blocks.length + ' blocks</p>';
+            }
+            html += '</div>';
+          }
+        }
+
+        // Subagents
+        if (subagentsRes.ok) {
+          var sData = await subagentsRes.json();
+          if (sData.subagents && sData.subagents.length > 0) {
+            html += '<div class="detail-section"><h4>Subagents (' + sData.subagents.length + ')</h4>';
+            html += '<ul class="file-list">' + sData.subagents.map(function(sa) {
+              return '<li style="cursor:default"><span class="file-path">' + esc(sa.agentId.substring(0, 20)) + '</span>' +
+                '<span style="font-size:0.75rem;color:var(--muted)">' +
+                sa.messageCount + ' msgs, ' + sa.toolUseCount + ' tools, ' +
+                formatNum(sa.totalInputTokens + sa.totalOutputTokens) + ' tokens</span></li>';
+            }).join('') + '</ul></div>';
+          }
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+      } catch {
+        container.innerHTML = '<p class="placeholder">Failed to load session detail.</p>';
+      }
+    }
+
+    async function searchThinking() {
+      var query = document.getElementById('thinkingSearchInput').value.trim();
+      if (!query) return;
+      var container = document.getElementById('thinkingResults');
+      try {
+        var res = await fetch('/api/search/thinking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query, limit: 20 })
+        });
+        var data = await res.json();
+        if (!data.results || data.results.length === 0) {
+          container.innerHTML = '<p class="placeholder">No thinking blocks match "' + esc(query) + '"</p>';
+          return;
+        }
+        container.innerHTML = data.results.map(function(r) {
+          return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
+            '<div class="ts">' + esc(r.block.sessionId.substring(0, 12)) + ' &middot; ' +
+            esc(new Date(r.block.timestamp).toLocaleString()) + ' &middot; ' +
+            formatNum(r.block.contentLength) + ' chars</div>' +
+            '<div>' + r.snippet + '</div></div>';
+        }).join('');
+      } catch {
+        container.innerHTML = '<p class="placeholder">Search failed.</p>';
+      }
+    }
+
+    document.getElementById('thinkingSearchInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') searchThinking();
     });
 
     loadStats();

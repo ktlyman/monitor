@@ -1,7 +1,15 @@
 import { readdir, stat, readFile, access } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import type { Project } from "../types/index.js";
+import type { FileType, Project } from "../types/index.js";
+
+/** A collected file with its type and content. */
+export interface CollectedFile {
+  projectName: string;
+  fileType: FileType;
+  relativePath: string;
+  content: string;
+}
 
 /** Default base directory for Claude Code project data. */
 const DEFAULT_CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
@@ -92,6 +100,167 @@ export class ProjectScanner {
     return null;
   }
 
+  /**
+   * Collect all documentation files from a project.
+   * Gathers from both the ~/.claude/projects/ data dir and the project source path.
+   */
+  async collectAllFiles(project: Project): Promise<CollectedFile[]> {
+    const files: CollectedFile[] = [];
+
+    // MEMORY.md from ~/.claude/projects/<dir>/memory/
+    const memory = await this.readMemoryFile(project.dirName);
+    if (memory) {
+      files.push({
+        projectName: project.name,
+        fileType: "memory",
+        relativePath: "memory/MEMORY.md",
+        content: memory,
+      });
+    }
+
+    // Also check for other .md files in the memory/ directory
+    await this._collectDirFiles(
+      join(this.baseDir, project.dirName, "memory"),
+      project.name,
+      "memory",
+      "memory/",
+      files,
+      ["MEMORY.md"] // already collected above
+    );
+
+    // CLAUDE.md from project source root
+    const claudeMd = await this._readFileIfExists(join(project.projectPath, "CLAUDE.md"));
+    if (claudeMd) {
+      files.push({
+        projectName: project.name,
+        fileType: "claude_md",
+        relativePath: "CLAUDE.md",
+        content: claudeMd,
+      });
+    }
+
+    // README.md from project source root
+    const readme = await this._readFileIfExists(join(project.projectPath, "README.md"));
+    if (readme) {
+      files.push({
+        projectName: project.name,
+        fileType: "readme",
+        relativePath: "README.md",
+        content: readme,
+      });
+    }
+
+    // .claude/rules/*.md
+    const rules = await this.readRuleFiles(project.projectPath);
+    for (const rule of rules) {
+      files.push({
+        projectName: project.name,
+        fileType: "rules",
+        relativePath: `.claude/rules/${rule.path}`,
+        content: rule.content,
+      });
+    }
+
+    // .claude/agent-lessons.md or agent-learnings.md
+    for (const name of ["agent-lessons.md", "agent-learnings.md"]) {
+      const content = await this._readFileIfExists(
+        join(project.projectPath, ".claude", name)
+      );
+      if (content) {
+        files.push({
+          projectName: project.name,
+          fileType: "agent_lessons",
+          relativePath: `.claude/${name}`,
+          content,
+        });
+      }
+    }
+
+    // .claude/skills/**/*.md
+    await this._collectDirFiles(
+      join(project.projectPath, ".claude", "skills"),
+      project.name,
+      "skills",
+      ".claude/skills/",
+      files
+    );
+
+    // .claude/commands/**/*.md
+    await this._collectDirFiles(
+      join(project.projectPath, ".claude", "commands"),
+      project.name,
+      "commands",
+      ".claude/commands/",
+      files
+    );
+
+    // .claude/launch.json
+    const launchConfig = await this._readFileIfExists(
+      join(project.projectPath, ".claude", "launch.json")
+    );
+    if (launchConfig) {
+      files.push({
+        projectName: project.name,
+        fileType: "launch_config",
+        relativePath: ".claude/launch.json",
+        content: launchConfig,
+      });
+    }
+
+    return files;
+  }
+
+  /** Discover session directories (that contain subagents/ and tool-results/). */
+  async discoverSessionDirectories(projectDirName: string): Promise<string[]> {
+    const dirPath = join(this.baseDir, projectDirName);
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "memory")
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Discover subagent JSONL files for a specific session. */
+  async discoverSubagentSessions(
+    projectDirName: string,
+    sessionId: string
+  ): Promise<Array<{ agentId: string; jsonlPath: string }>> {
+    const subagentsDir = join(this.baseDir, projectDirName, sessionId, "subagents");
+    try {
+      const entries = await readdir(subagentsDir, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isFile() && e.name.startsWith("agent-") && e.name.endsWith(".jsonl"))
+        .map((e) => ({
+          agentId: e.name.replace(/^agent-/, "").replace(/\.jsonl$/, ""),
+          jsonlPath: join(subagentsDir, e.name),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Discover tool result text files for a specific session. */
+  async discoverToolResultFiles(
+    projectDirName: string,
+    sessionId: string
+  ): Promise<Array<{ toolUseId: string; filePath: string }>> {
+    const resultsDir = join(this.baseDir, projectDirName, sessionId, "tool-results");
+    try {
+      const entries = await readdir(resultsDir, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isFile() && e.name.endsWith(".txt"))
+        .map((e) => ({
+          toolUseId: e.name.replace(/\.txt$/, ""),
+          filePath: join(resultsDir, e.name),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
   /** Extract the human-readable project name from a directory name. */
   static parseProjectName(dirName: string): string {
     // Format: "-Users-kevin-Projects-<name>" or "-Users-kevin-testing-<name>"
@@ -130,6 +299,46 @@ export class ProjectScanner {
       };
     } catch {
       return null;
+    }
+  }
+
+  /** Recursively collect .md files from a directory. */
+  private async _collectDirFiles(
+    dirPath: string,
+    projectName: string,
+    fileType: FileType,
+    relativePrefix: string,
+    results: CollectedFile[],
+    exclude: string[] = []
+  ): Promise<void> {
+    try {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (exclude.includes(entry.name)) continue;
+        const fullPath = join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          await this._collectDirFiles(
+            fullPath,
+            projectName,
+            fileType,
+            `${relativePrefix}${entry.name}/`,
+            results,
+            exclude
+          );
+        } else if (entry.isFile() && (entry.name.endsWith(".md") || entry.name.endsWith(".json"))) {
+          const content = await this._readFileIfExists(fullPath);
+          if (content) {
+            results.push({
+              projectName,
+              fileType,
+              relativePath: `${relativePrefix}${entry.name}`,
+              content,
+            });
+          }
+        }
+      }
+    } catch {
+      // Directory may not exist — that's fine
     }
   }
 

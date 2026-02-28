@@ -22,11 +22,14 @@ program
   .command("scan")
   .description("Scan ~/.claude/projects/ for new sessions and learnings")
   .option("-p, --project <name>", "scan only a specific project")
+  .option("--deep", "deep extract session messages, tools, thinking blocks")
+  .option("--force", "re-extract deep data even if already extracted")
   .option("--db <path>", "database path", "monitor.db")
-  .action(async (opts: { project?: string; db: string }) => {
+  .action(async (opts: { project?: string; deep?: boolean; force?: boolean; db: string }) => {
     const { ProjectScanner } = await import("../collector/scanner.js");
     const { LearningExtractor } = await import("../analyzer/extractor.js");
     const { MonitorDatabase } = await import("../storage/database.js");
+    const { readFile } = await import("node:fs/promises");
 
     const db = new MonitorDatabase(opts.db);
     const scanner = new ProjectScanner();
@@ -38,6 +41,8 @@ program
     const projects = await scanner.discoverProjects();
     let learningCount = 0;
     let sessionCount = 0;
+    let fileCount = 0;
+    let fileChangedCount = 0;
     let errorCount = 0;
 
     for (const project of projects) {
@@ -112,8 +117,20 @@ program
           }
         }
 
+        // Collect all project documentation files
+        const collectedFiles = await scanner.collectAllFiles(project);
+        for (const file of collectedFiles) {
+          try {
+            const { changed } = db.upsertProjectFile(file);
+            fileCount++;
+            if (changed) fileChangedCount++;
+          } catch {
+            errorCount++;
+          }
+        }
+
         console.log(
-          `  ${project.name}: ${jsonlPaths.length} sessions, ${learningCount} learnings`
+          `  ${project.name}: ${jsonlPaths.length} sessions, ${learningCount} learnings, ${collectedFiles.length} files`
         );
       } catch (err) {
         console.error(`  ${project.name}: ERROR — ${err}`);
@@ -121,9 +138,106 @@ program
       }
     }
 
+    // ---- Deep extraction phase ----
+    let deepSessionCount = 0;
+    let deepMessageCount = 0;
+    let deepToolCount = 0;
+    let deepThinkingCount = 0;
+    let subagentCount = 0;
+    let toolResultCount = 0;
+
+    if (opts.deep) {
+      console.log("\nDeep extracting session data...");
+
+      for (const project of projects) {
+        if (opts.project && project.name !== opts.project) continue;
+
+        const jsonlPaths = await scanner.discoverSessions(project.dirName);
+        for (const jsonlPath of jsonlPaths) {
+          try {
+            // Get the session ID we stored earlier
+            const sessionMeta = await extractor.extractSessionMeta(jsonlPath, project.dirName);
+            const sessionId = sessionMeta.sessionId;
+
+            // Skip if already extracted (unless --force)
+            if (!opts.force && db.isSessionDeepExtracted(sessionId)) {
+              continue;
+            }
+
+            // Clear existing deep data if re-extracting
+            if (opts.force) {
+              db.clearDeepDataForSession(sessionId);
+            }
+
+            const result = await extractor.extractSessionDeep(jsonlPath, sessionId);
+
+            db.insertSessionMessages(result.messages);
+            db.insertToolInvocations(result.toolInvocations);
+            db.insertThinkingBlocks(result.thinkingBlocks);
+
+            // Discover and extract subagents for this session
+            const sessionDirs = await scanner.discoverSessionDirectories(project.dirName);
+            const matchingDir = sessionDirs.find((d) => d === sessionId || jsonlPath.includes(d));
+            const sessionDirId = matchingDir ?? sessionId;
+
+            const subagentFiles = await scanner.discoverSubagentSessions(project.dirName, sessionDirId);
+            for (const sub of subagentFiles) {
+              try {
+                const subRun = await extractor.extractSubagentMeta(sub.jsonlPath, sessionId, sub.agentId);
+                db.upsertSubagentRun(subRun);
+                subagentCount++;
+              } catch {
+                errorCount++;
+              }
+            }
+
+            // Update analytics with subagent count
+            result.analytics.subagentCount = subagentFiles.length;
+            db.upsertSessionAnalytics(result.analytics);
+
+            // Discover and store tool result files
+            const toolResultFiles = await scanner.discoverToolResultFiles(project.dirName, sessionDirId);
+            for (const tr of toolResultFiles) {
+              try {
+                const content = await readFile(tr.filePath, "utf-8");
+                db.upsertToolResultFile({
+                  sessionId,
+                  toolUseId: tr.toolUseId,
+                  content,
+                  sizeBytes: Buffer.byteLength(content, "utf-8"),
+                });
+                toolResultCount++;
+              } catch {
+                errorCount++;
+              }
+            }
+
+            deepSessionCount++;
+            deepMessageCount += result.messages.length;
+            deepToolCount += result.toolInvocations.length;
+            deepThinkingCount += result.thinkingBlocks.length;
+
+            if (result.parseErrors > 0) {
+              console.log(`  ${project.name}/${sessionId}: ${result.parseErrors} parse errors`);
+            }
+          } catch {
+            errorCount++;
+          }
+        }
+
+        console.log(`  ${project.name}: deep extracted`);
+      }
+
+      console.log(
+        `\nDeep extraction: ${deepSessionCount} sessions, ${deepMessageCount} messages, ` +
+        `${deepToolCount} tool invocations, ${deepThinkingCount} thinking blocks, ` +
+        `${subagentCount} subagents, ${toolResultCount} tool results`
+      );
+    }
+
     const durationMs = Date.now() - startTime;
     console.log(
-      `\nDone in ${durationMs}ms: ${projects.length} projects, ${sessionCount} sessions, ${learningCount} learnings, ${errorCount} errors`
+      `\nDone in ${durationMs}ms: ${projects.length} projects, ${sessionCount} sessions, ${learningCount} learnings, ${fileCount} files (${fileChangedCount} changed), ${errorCount} errors`
     );
 
     db.close();

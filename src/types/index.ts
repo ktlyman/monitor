@@ -110,6 +110,157 @@ export interface SearchOptions {
   offset?: number;
 }
 
+// ---- Project file types ----
+
+/** Types of documentation files tracked from projects. */
+export type FileType =
+  | "claude_md"
+  | "memory"
+  | "rules"
+  | "skills"
+  | "commands"
+  | "agent_lessons"
+  | "readme"
+  | "launch_config";
+
+/** A documentation file collected from a Claude Code project. */
+export interface ProjectFile {
+  /** Auto-generated storage ID */
+  id?: number;
+  /** Source project name */
+  projectName: string;
+  /** File type classification */
+  fileType: FileType;
+  /** Relative path within the project (e.g. ".claude/rules/scanner-trust.md") */
+  relativePath: string;
+  /** Full file content */
+  content: string;
+  /** SHA-256 hash of content for change detection */
+  contentHash: string;
+  /** File size in bytes */
+  sizeBytes: number;
+  /** When this version was first seen */
+  firstSeenAt: string;
+  /** When this file was last updated */
+  lastSeenAt: string;
+}
+
+/** A historical version of a project file. */
+export interface FileVersion {
+  /** Auto-generated storage ID */
+  id?: number;
+  /** Reference to the project_files row */
+  projectFileId: number;
+  /** Full content at this version */
+  content: string;
+  /** SHA-256 hash */
+  contentHash: string;
+  /** File size in bytes */
+  sizeBytes: number;
+  /** When this version was recorded */
+  recordedAt: string;
+}
+
+// ---- Session analytics types ----
+
+/** A single message entry extracted from a session JSONL file. */
+export interface SessionMessage {
+  id?: number;
+  sessionId: string;
+  uuid: string;
+  parentUuid: string | null;
+  /** Entry type: "user" | "assistant" | "system" */
+  entryType: string;
+  timestamp: string;
+  /** Model used (assistant messages only) */
+  model: string | null;
+  /** Stop reason: "end_turn" | "tool_use" | "max_tokens" */
+  stopReason: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  /** Number of content blocks in this message */
+  contentBlockCount: number;
+  /** Working directory at time of message */
+  cwd: string | null;
+  /** Git branch at time of message */
+  gitBranch: string | null;
+}
+
+/** A tool invocation extracted from an assistant message. */
+export interface ToolInvocation {
+  id?: number;
+  sessionId: string;
+  messageUuid: string;
+  toolUseId: string;
+  toolName: string;
+  /** JSON-serialized input (truncated to 2000 chars) */
+  inputSummary: string;
+  isError: boolean;
+  timestamp: string;
+}
+
+/** A thinking block extracted from an assistant message. */
+export interface ThinkingBlock {
+  id?: number;
+  sessionId: string;
+  messageUuid: string;
+  content: string;
+  contentLength: number;
+  timestamp: string;
+}
+
+/** A subagent session discovered in a session's subagents/ directory. */
+export interface SubagentRun {
+  id?: number;
+  parentSessionId: string;
+  agentId: string;
+  jsonlPath: string;
+  /** First user message content (truncated to 500 chars) */
+  prompt: string;
+  messageCount: number;
+  toolUseCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  startedAt: string;
+  endedAt: string;
+  fileSizeBytes: number;
+}
+
+/** A tool result file stored in a session's tool-results/ directory. */
+export interface ToolResultFile {
+  id?: number;
+  sessionId: string;
+  toolUseId: string;
+  content: string;
+  sizeBytes: number;
+}
+
+/** Pre-computed analytics for a session. */
+export interface SessionAnalytics {
+  sessionId: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWrite5mTokens: number;
+  totalCacheWrite1hTokens: number;
+  estimatedCostUsd: number;
+  /** Tool name → count */
+  toolBreakdown: Record<string, number>;
+  errorCount: number;
+  totalToolUses: number;
+  thinkingBlockCount: number;
+  thinkingCharCount: number;
+  subagentCount: number;
+  /** Number of actual API requests (deduplicated from streaming fragments) */
+  apiRequestCount: number;
+  models: string;
+  durationSeconds: number;
+  deepExtractedAt: string;
+}
+
 // ---- Scan types ----
 
 /** Result of a scan operation. */
@@ -139,4 +290,20 @@ export interface SystemStats {
     learnings: number;
     lastScanned: string;
   }>;
+  analytics?: {
+    totalMessages: number;
+    totalToolInvocations: number;
+    totalThinkingBlocks: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCacheCreationTokens: number;
+    totalCacheReadTokens: number;
+    totalCacheWrite5mTokens: number;
+    totalCacheWrite1hTokens: number;
+    totalApiRequests: number;
+    totalEstimatedCostUsd: number;
+    topTools: Array<{ name: string; count: number }>;
+    modelBreakdown: Record<string, number>;
+    sessionsDeepExtracted: number;
+  };
 }
