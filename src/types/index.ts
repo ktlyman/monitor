@@ -190,6 +190,8 @@ export interface SessionMessage {
   cwd: string | null;
   /** Git branch at time of message */
   gitBranch: string | null;
+  /** Message content text (may be null for sessions not re-extracted with content support) */
+  content: string | null;
 }
 
 /** A tool invocation extracted from an assistant message. */

@@ -19,7 +19,7 @@ import type {
   SystemStats,
 } from "../types/index.js";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -270,6 +270,7 @@ export class MonitorDatabase {
       if (currentVersion < 3) this._migrateV3();
       if (currentVersion < 4) this._migrateV4();
       if (currentVersion < 5) this._migrateV5();
+      if (currentVersion < 6) this._migrateV6();
       this.db
         .prepare(
           "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -700,8 +701,8 @@ export class MonitorDatabase {
       `INSERT OR IGNORE INTO session_messages
        (session_id, uuid, parent_uuid, entry_type, timestamp, model, stop_reason,
         input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-        content_block_count, cwd, git_branch)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        content_block_count, cwd, git_branch, content)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const tx = this.db.transaction(() => {
       for (const m of messages) {
@@ -709,7 +710,7 @@ export class MonitorDatabase {
           m.sessionId, m.uuid, m.parentUuid, m.entryType, m.timestamp,
           m.model, m.stopReason, m.inputTokens, m.outputTokens,
           m.cacheCreationTokens, m.cacheReadTokens, m.contentBlockCount,
-          m.cwd, m.gitBranch
+          m.cwd, m.gitBranch, m.content ?? null
         );
       }
     });
@@ -914,6 +915,7 @@ export class MonitorDatabase {
       contentBlockCount: r.content_block_count as number,
       cwd: r.cwd as string | null,
       gitBranch: r.git_branch as string | null,
+      content: (r.content as string | null) ?? null,
     }));
   }
 
@@ -992,6 +994,67 @@ export class MonitorDatabase {
         contentLength: r.content_length as number,
         timestamp: r.timestamp as string,
       },
+      snippet: r.snippet as string,
+      rank: r.rank as number,
+    }));
+  }
+
+  /** FTS5 search on session message content. */
+  searchMessages(
+    query: string,
+    options?: { sessionId?: string; entryType?: string; limit?: number }
+  ): Array<{ message: SessionMessage; projectName: string; snippet: string; rank: number }> {
+    const params: unknown[] = [query];
+    const filters: string[] = [];
+
+    if (options?.sessionId) {
+      filters.push("m.session_id = ?");
+      params.push(options.sessionId);
+    }
+    if (options?.entryType) {
+      filters.push("m.entry_type = ?");
+      params.push(options.entryType);
+    }
+
+    const whereExtra = filters.length > 0 ? "AND " + filters.join(" AND ") : "";
+    params.push(options?.limit ?? 20);
+
+    const rows = this.db
+      .prepare(
+        `SELECT m.*, p.name AS project_name,
+                snippet(session_messages_fts, 0, '<b>', '</b>', '...', 60) AS snippet,
+                rank
+         FROM session_messages_fts
+         JOIN session_messages m ON m.id = session_messages_fts.rowid
+         JOIN sessions s ON s.session_id = m.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         WHERE session_messages_fts MATCH ?
+         ${whereExtra}
+         ORDER BY rank
+         LIMIT ?`
+      )
+      .all(...params) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      message: {
+        id: r.id as number,
+        sessionId: r.session_id as string,
+        uuid: r.uuid as string,
+        parentUuid: r.parent_uuid as string | null,
+        entryType: r.entry_type as string,
+        timestamp: r.timestamp as string,
+        model: r.model as string | null,
+        stopReason: r.stop_reason as string | null,
+        inputTokens: r.input_tokens as number,
+        outputTokens: r.output_tokens as number,
+        cacheCreationTokens: r.cache_creation_tokens as number,
+        cacheReadTokens: r.cache_read_tokens as number,
+        contentBlockCount: r.content_block_count as number,
+        cwd: r.cwd as string | null,
+        gitBranch: r.git_branch as string | null,
+        content: r.content as string | null,
+      },
+      projectName: r.project_name as string,
       snippet: r.snippet as string,
       rank: r.rank as number,
     }));
@@ -1156,6 +1219,56 @@ export class MonitorDatabase {
     this.db.exec(`ALTER TABLE project_files_new RENAME TO project_files`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_files_dir ON project_files(project_dir_name)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_project_files_type ON project_files(file_type)`);
+  }
+
+  private _migrateV6(): void {
+    // Add content column to session_messages (nullable for backward compat)
+    this.db.exec(`ALTER TABLE session_messages ADD COLUMN content TEXT`);
+
+    // Create FTS5 table for message content search
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
+        content,
+        session_id UNINDEXED,
+        entry_type UNINDEXED,
+        content='session_messages',
+        content_rowid='id',
+        tokenize='porter'
+      )
+    `);
+
+    // Sync triggers — guard against NULL content (old rows won't have it)
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON session_messages
+      WHEN new.content IS NOT NULL BEGIN
+        INSERT INTO session_messages_fts(rowid, content, session_id, entry_type)
+        VALUES (new.id, new.content, new.session_id, new.entry_type);
+      END
+    `);
+
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON session_messages
+      WHEN old.content IS NOT NULL BEGIN
+        INSERT INTO session_messages_fts(session_messages_fts, rowid, content, session_id, entry_type)
+        VALUES ('delete', old.id, old.content, old.session_id, old.entry_type);
+      END
+    `);
+
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON session_messages
+      WHEN old.content IS NOT NULL BEGIN
+        INSERT INTO session_messages_fts(session_messages_fts, rowid, content, session_id, entry_type)
+        VALUES ('delete', old.id, old.content, old.session_id, old.entry_type);
+      END
+    `);
+
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS messages_fts_au2 AFTER UPDATE ON session_messages
+      WHEN new.content IS NOT NULL BEGIN
+        INSERT INTO session_messages_fts(rowid, content, session_id, entry_type)
+        VALUES (new.id, new.content, new.session_id, new.entry_type);
+      END
+    `);
   }
 
   // ---- New query methods for analytics & MCP ----

@@ -295,6 +295,14 @@
         </div>
         <div id="thinkingResults"></div>
       </div>
+      <div id="messageSearch" style="margin-top:1.5rem">
+        <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Search Session Messages</h3>
+        <div class="thinking-search-box">
+          <input type="text" id="messageSearchInput" placeholder="Search conversation content...">
+          <button class="btn" onclick="searchMessages()">Search</button>
+        </div>
+        <div id="messageResults"></div>
+      </div>
       <div class="session-browser" id="sessionBrowser">
         <h3 style="font-size:0.95rem;margin-bottom:0.75rem">Sessions by Project</h3>
         <div class="project-list" id="analyticsProjectList"></div>
@@ -883,6 +891,37 @@
 
     document.getElementById('thinkingSearchInput').addEventListener('keydown', function(e) {
       if (e.key === 'Enter') searchThinking();
+    });
+
+    async function searchMessages() {
+      var query = document.getElementById('messageSearchInput').value.trim();
+      if (!query) return;
+      var container = document.getElementById('messageResults');
+      try {
+        var res = await fetch('/api/search/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query, limit: 20 })
+        });
+        var data = await res.json();
+        if (!data.results || data.results.length === 0) {
+          container.innerHTML = '<p class="placeholder">No messages match "' + esc(query) + '"</p>';
+          return;
+        }
+        container.innerHTML = data.results.map(function(r) {
+          return '<div class="thinking-block-item" onclick="this.classList.toggle(\'expanded\')">' +
+            '<div class="ts">' + esc(r.projectName) + ' &middot; ' +
+            esc(r.message.entryType) + ' &middot; ' +
+            esc(new Date(r.message.timestamp).toLocaleString()) + '</div>' +
+            '<div>' + r.snippet + '</div></div>';
+        }).join('');
+      } catch {
+        container.innerHTML = '<p class="placeholder">Search failed.</p>';
+      }
+    }
+
+    document.getElementById('messageSearchInput').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') searchMessages();
     });
 
     loadStats();

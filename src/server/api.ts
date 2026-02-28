@@ -315,6 +315,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/search/messages — FTS5 search on message content
+    if (pathname === "/api/search/messages" && method === "POST") {
+      const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      const query = body.query as string | undefined;
+      if (!query) {
+        sendError(res, "Missing query parameter");
+        return;
+      }
+      const results = db.searchMessages(query, {
+        sessionId: body.sessionId as string | undefined,
+        entryType: body.entryType as string | undefined,
+        limit: (body.limit as number) ?? 20,
+      });
+      const redacted = results.map((r) => ({
+        ...r,
+        message: redactMessage(r.message as unknown as Record<string, unknown>),
+      }));
+      sendJson(res, { results: redacted });
+      return;
+    }
+
     // GET /api/analytics/summary — global analytics aggregates
     if (pathname === "/api/analytics/summary" && method === "GET") {
       const analytics = db.getAnalyticsStats();

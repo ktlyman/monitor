@@ -25,7 +25,7 @@ describe("MonitorDatabase", () => {
 
   // ---- Schema ----
 
-  it("initializes with schema v5", () => {
+  it("initializes with schema v6", () => {
     // Verify all core tables exist by performing simple queries
     expect(() => db.getProjects()).not.toThrow();
     expect(() => db.getStats()).not.toThrow();
@@ -223,6 +223,7 @@ describe("MonitorDatabase", () => {
         contentBlockCount: 1,
         cwd: "/home/user/project",
         gitBranch: "main",
+        content: null,
       },
       {
         sessionId: "abc-123",
@@ -239,6 +240,7 @@ describe("MonitorDatabase", () => {
         contentBlockCount: 3,
         cwd: "/home/user/project",
         gitBranch: "main",
+        content: null,
       },
     ];
 
@@ -255,9 +257,9 @@ describe("MonitorDatabase", () => {
     db.upsertSession(testSession);
 
     db.insertSessionMessages([
-      { sessionId: "abc-123", uuid: "u1", parentUuid: null, entryType: "user", timestamp: "2026-02-25T10:00:00Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
-      { sessionId: "abc-123", uuid: "a1", parentUuid: "u1", entryType: "assistant", timestamp: "2026-02-25T10:00:01Z", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 100, outputTokens: 200, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 2, cwd: null, gitBranch: null },
-      { sessionId: "abc-123", uuid: "u2", parentUuid: "a1", entryType: "user", timestamp: "2026-02-25T10:00:02Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+      { sessionId: "abc-123", uuid: "u1", parentUuid: null, entryType: "user", timestamp: "2026-02-25T10:00:00Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
+      { sessionId: "abc-123", uuid: "a1", parentUuid: "u1", entryType: "assistant", timestamp: "2026-02-25T10:00:01Z", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 100, outputTokens: 200, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 2, cwd: null, gitBranch: null, content: null },
+      { sessionId: "abc-123", uuid: "u2", parentUuid: "a1", entryType: "user", timestamp: "2026-02-25T10:00:02Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
     ]);
 
     const assistantOnly = db.getSessionMessages("abc-123", { entryType: "assistant" });
@@ -461,7 +463,7 @@ describe("MonitorDatabase", () => {
   it("clears all deep data for a session", () => {
     // Insert various data
     db.insertSessionMessages([
-      { sessionId: "abc-123", uuid: "m1", parentUuid: null, entryType: "user", timestamp: "2026-02-25T10:00:00Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+      { sessionId: "abc-123", uuid: "m1", parentUuid: null, entryType: "user", timestamp: "2026-02-25T10:00:00Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
     ]);
     db.insertToolInvocations([
       { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z" },
@@ -514,8 +516,8 @@ describe("MonitorDatabase", () => {
 
     // Insert some tool invocations and messages for aggregation
     db.insertSessionMessages([
-      { sessionId: "s1", uuid: "m1", parentUuid: null, entryType: "assistant", timestamp: "2026-02-25T10:00:00Z", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 1000, outputTokens: 500, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
-      { sessionId: "s1", uuid: "m2", parentUuid: "m1", entryType: "user", timestamp: "2026-02-25T10:00:01Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+      { sessionId: "s1", uuid: "m1", parentUuid: null, entryType: "assistant", timestamp: "2026-02-25T10:00:00Z", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 1000, outputTokens: 500, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
+      { sessionId: "s1", uuid: "m2", parentUuid: "m1", entryType: "user", timestamp: "2026-02-25T10:00:01Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
     ]);
     db.insertToolInvocations([
       { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z" },
@@ -596,9 +598,9 @@ describe("MonitorDatabase", () => {
 
   it("returns per-model message stats", () => {
     db.insertSessionMessages([
-      { sessionId: "s1", uuid: "m-opus", parentUuid: null, entryType: "assistant", timestamp: "T1", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 5000, outputTokens: 2000, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
-      { sessionId: "s1", uuid: "m-haiku1", parentUuid: null, entryType: "assistant", timestamp: "T2", model: "claude-haiku-4-5-20251001", stopReason: "end_turn", inputTokens: 1000, outputTokens: 500, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
-      { sessionId: "s1", uuid: "m-haiku2", parentUuid: null, entryType: "assistant", timestamp: "T3", model: "claude-haiku-4-5-20251001", stopReason: "end_turn", inputTokens: 2000, outputTokens: 1000, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null },
+      { sessionId: "s1", uuid: "m-opus", parentUuid: null, entryType: "assistant", timestamp: "T1", model: "claude-opus-4-6", stopReason: "end_turn", inputTokens: 5000, outputTokens: 2000, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
+      { sessionId: "s1", uuid: "m-haiku1", parentUuid: null, entryType: "assistant", timestamp: "T2", model: "claude-haiku-4-5-20251001", stopReason: "end_turn", inputTokens: 1000, outputTokens: 500, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
+      { sessionId: "s1", uuid: "m-haiku2", parentUuid: null, entryType: "assistant", timestamp: "T3", model: "claude-haiku-4-5-20251001", stopReason: "end_turn", inputTokens: 2000, outputTokens: 1000, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
     ]);
 
     const stats = db.getModelStats();
@@ -707,5 +709,169 @@ describe("MonitorDatabase", () => {
     const learnings = db.getLearningsForProject("-Users-kevin-Projects-testapp");
     expect(learnings).toHaveLength(1);
     expect(learnings[0].content).toContain("SQLite");
+  });
+
+  // ---- Message content and FTS ----
+
+  it("stores and retrieves message content", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertSessionMessages([
+      {
+        sessionId: "abc-123", uuid: "mc-1", parentUuid: null,
+        entryType: "user", timestamp: "2026-02-25T10:00:00Z",
+        model: null, stopReason: null,
+        inputTokens: 0, outputTokens: 0,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: "Please refactor the authentication module",
+      },
+      {
+        sessionId: "abc-123", uuid: "mc-2", parentUuid: "mc-1",
+        entryType: "assistant", timestamp: "2026-02-25T10:00:05Z",
+        model: "claude-opus-4-6", stopReason: "end_turn",
+        inputTokens: 1000, outputTokens: 500,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 2, cwd: null, gitBranch: null,
+        content: "I'll refactor the authentication module by extracting the JWT validation logic",
+      },
+    ]);
+
+    const messages = db.getSessionMessages("abc-123");
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toBe("Please refactor the authentication module");
+    expect(messages[1].content).toContain("JWT validation");
+  });
+
+  it("handles null content in messages (backward compat)", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertSessionMessages([
+      {
+        sessionId: "abc-123", uuid: "nc-1", parentUuid: null,
+        entryType: "user", timestamp: "2026-02-25T10:00:00Z",
+        model: null, stopReason: null,
+        inputTokens: 0, outputTokens: 0,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: null,
+      },
+    ]);
+
+    const messages = db.getSessionMessages("abc-123");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBeNull();
+  });
+
+  it("searches message content via FTS5", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertSessionMessages([
+      {
+        sessionId: "abc-123", uuid: "fs-1", parentUuid: null,
+        entryType: "user", timestamp: "2026-02-25T10:00:00Z",
+        model: null, stopReason: null,
+        inputTokens: 0, outputTokens: 0,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: "Help me implement websocket reconnection logic with exponential backoff",
+      },
+      {
+        sessionId: "abc-123", uuid: "fs-2", parentUuid: "fs-1",
+        entryType: "assistant", timestamp: "2026-02-25T10:00:05Z",
+        model: "claude-opus-4-6", stopReason: "end_turn",
+        inputTokens: 1000, outputTokens: 500,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: "I'll implement the websocket reconnection with exponential backoff strategy",
+      },
+    ]);
+
+    const results = db.searchMessages("websocket exponential backoff");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].projectName).toBe("testapp");
+  });
+
+  it("FTS message search respects session and entryType filters", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.upsertSession({ ...testSession, sessionId: "sess-other" });
+
+    db.insertSessionMessages([
+      {
+        sessionId: "abc-123", uuid: "sf-1", parentUuid: null,
+        entryType: "user", timestamp: "2026-02-25T10:00:00Z",
+        model: null, stopReason: null,
+        inputTokens: 0, outputTokens: 0,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: "Unique zymurgy fermentation phrase for searching",
+      },
+      {
+        sessionId: "sess-other", uuid: "sf-2", parentUuid: null,
+        entryType: "assistant", timestamp: "2026-02-25T10:00:00Z",
+        model: "claude-opus-4-6", stopReason: "end_turn",
+        inputTokens: 100, outputTokens: 50,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: "Unique zymurgy fermentation in another session",
+      },
+    ]);
+
+    const all = db.searchMessages("zymurgy fermentation");
+    expect(all).toHaveLength(2);
+
+    const filtered = db.searchMessages("zymurgy fermentation", { sessionId: "abc-123" });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].message.sessionId).toBe("abc-123");
+
+    const byType = db.searchMessages("zymurgy fermentation", { entryType: "assistant" });
+    expect(byType).toHaveLength(1);
+    expect(byType[0].message.entryType).toBe("assistant");
+  });
+
+  it("FTS message sync: deleting messages removes from FTS", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertSessionMessages([
+      {
+        sessionId: "abc-123", uuid: "del-1", parentUuid: null,
+        entryType: "user", timestamp: "2026-02-25T10:00:00Z",
+        model: null, stopReason: null,
+        inputTokens: 0, outputTokens: 0,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: "Xylophone melody uniquely searchable phrase for deletion test",
+      },
+    ]);
+
+    expect(db.searchMessages("xylophone melody").length).toBe(1);
+    db.clearDeepDataForSession("abc-123");
+    expect(db.searchMessages("xylophone melody").length).toBe(0);
+  });
+
+  it("null content messages are not indexed in FTS", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertSessionMessages([
+      {
+        sessionId: "abc-123", uuid: "null-fts-1", parentUuid: null,
+        entryType: "user", timestamp: "2026-02-25T10:00:00Z",
+        model: null, stopReason: null,
+        inputTokens: 0, outputTokens: 0,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        contentBlockCount: 1, cwd: null, gitBranch: null,
+        content: null,
+      },
+    ]);
+
+    // Should not throw even with no FTS entries
+    const results = db.searchMessages("anything");
+    expect(results).toHaveLength(0);
   });
 });

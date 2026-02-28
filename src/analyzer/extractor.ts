@@ -49,6 +49,59 @@ function getPricing(model: string | null): ModelPricing {
   return DEFAULT_PRICING;
 }
 
+/** Maximum character length for stored message content. */
+const MAX_MESSAGE_CONTENT_LENGTH = 10_000;
+
+/** Extract text content from an array of content blocks, truncating to limit. */
+function extractContentText(contentBlocks: Record<string, unknown>[]): string | null {
+  if (contentBlocks.length === 0) return null;
+
+  const parts: string[] = [];
+  for (const block of contentBlocks) {
+    const blockType = block.type as string;
+    if (blockType === "text") {
+      const text = (block.text as string) ?? "";
+      if (text) parts.push(text);
+    } else if (blockType === "tool_result") {
+      const content = block.content;
+      if (typeof content === "string") {
+        parts.push(`[tool_result: ${content.slice(0, 200)}]`);
+      } else if (Array.isArray(content)) {
+        const textParts = (content as Record<string, unknown>[])
+          .filter((b) => b.type === "text")
+          .map((b) => ((b.text as string) ?? ""))
+          .join(" ");
+        if (textParts) {
+          parts.push(`[tool_result: ${textParts.slice(0, 200)}]`);
+        }
+      }
+    }
+    // Skip tool_use (captured as ToolInvocation) and thinking (captured as ThinkingBlock)
+  }
+
+  if (parts.length === 0) return null;
+  const combined = parts.join("\n");
+  return combined.length > MAX_MESSAGE_CONTENT_LENGTH
+    ? combined.slice(0, MAX_MESSAGE_CONTENT_LENGTH)
+    : combined;
+}
+
+/** Extract content from a user message entry (handles both string and array formats). */
+function extractUserContent(entry: Record<string, unknown>): string | null {
+  const message = entry.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+
+  if (typeof content === "string") {
+    return content.length > MAX_MESSAGE_CONTENT_LENGTH
+      ? content.slice(0, MAX_MESSAGE_CONTENT_LENGTH)
+      : content;
+  }
+  if (Array.isArray(content)) {
+    return extractContentText(content as Record<string, unknown>[]);
+  }
+  return null;
+}
+
 /**
  * Extracts learnings from collected project data.
  * Parses JSONL sessions, MEMORY.md, CLAUDE.md, and rule files.
@@ -312,6 +365,11 @@ export class LearningExtractor {
               (cacheReadTokens / 1_000_000) * pricing.cacheRead;
           }
 
+          // Extract message content text
+          const messageContent = entryType === "user"
+            ? extractUserContent(entry)
+            : extractContentText(contentBlocks);
+
           messages.push({
             sessionId,
             uuid,
@@ -327,6 +385,7 @@ export class LearningExtractor {
             contentBlockCount: contentBlocks.length,
             cwd,
             gitBranch,
+            content: messageContent,
           });
 
           // Extract tool invocations from assistant content

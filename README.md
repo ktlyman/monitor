@@ -81,7 +81,7 @@ Add to your Claude Code or Claude Desktop config:
 }
 ```
 
-Build first with `npm run build`, then the MCP server exposes 6 tools:
+Build first with `npm run build`, then the MCP server exposes 14 tools:
 
 - `search_learnings` — Full-text search across all collected learnings
 - `list_projects` — List all discovered projects with session counts
@@ -89,6 +89,14 @@ Build first with `npm run build`, then the MCP server exposes 6 tools:
 - `get_stats` — Database-wide statistics
 - `search_thinking` — Full-text search across thinking blocks
 - `get_recommendations` — Rules-based optimization suggestions (cost, efficiency, reliability)
+- `list_project_files` — List documentation files for a project (CLAUDE.md, rules, memory, etc.)
+- `get_file_content` — Retrieve the full content of a project documentation file
+- `get_tool_success_rates` — Per-tool reliability statistics (calls, errors, success rate)
+- `get_expensive_sessions` — Most expensive sessions ranked by estimated cost
+- `get_model_breakdown` — Per-model token and message statistics
+- `get_session_analytics` — Full analytics for a specific session
+- `get_session_messages` — Browse message metadata for a session
+- `search_messages` — Full-text search across session message content
 
 ## Development
 

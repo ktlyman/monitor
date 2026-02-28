@@ -564,4 +564,96 @@ describe("LearningExtractor", () => {
       expect(learnings[0].projectDirName).toBe("-Users-kevin-Projects-test");
     });
   });
+
+  // ---- Message content extraction ----
+
+  describe("message content extraction", () => {
+    it("extracts text content from assistant messages", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "user", timestamp: "T1", uuid: "u1",
+          message: { content: "Tell me about database migrations" },
+        },
+        {
+          type: "assistant", timestamp: "T2", uuid: "a1",
+          message: {
+            content: [
+              { type: "text", text: "I'll explain database migrations." },
+              { type: "tool_use", id: "t1", name: "Read", input: {} },
+            ],
+            model: "claude-opus-4-6",
+          },
+          usage: {},
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // User message with string content
+      expect(result.messages[0].content).toBe("Tell me about database migrations");
+      // Assistant message: text block only (tool_use skipped)
+      expect(result.messages[1].content).toBe("I'll explain database migrations.");
+    });
+
+    it("extracts user message content from array of blocks", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "user", timestamp: "T1", uuid: "u1",
+          message: {
+            content: [
+              { type: "text", text: "First part." },
+              { type: "tool_result", tool_use_id: "t1", content: "Result data here of a long string" },
+              { type: "text", text: "Second part." },
+            ],
+          },
+        },
+        {
+          type: "assistant", timestamp: "T2", uuid: "a1",
+          message: { content: [], model: "claude-opus-4-6" },
+          usage: {},
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.messages[0].content).toContain("First part.");
+      expect(result.messages[0].content).toContain("[tool_result:");
+      expect(result.messages[0].content).toContain("Second part.");
+    });
+
+    it("truncates message content at 10,000 characters", async () => {
+      const longText = "A".repeat(15000);
+      const filePath = writeJsonl([
+        {
+          type: "user", timestamp: "T1", uuid: "u1",
+          message: { content: longText },
+        },
+        {
+          type: "assistant", timestamp: "T2", uuid: "a1",
+          message: { content: [], model: "claude-opus-4-6" },
+          usage: {},
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.messages[0].content).not.toBeNull();
+      expect(result.messages[0].content!.length).toBe(10000);
+    });
+
+    it("returns null content when message has no text blocks", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a1",
+          message: {
+            content: [
+              { type: "tool_use", id: "t1", name: "Read", input: {} },
+            ],
+            model: "claude-opus-4-6",
+          },
+          usage: {},
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.messages[0].content).toBeNull();
+    });
+  });
 });
