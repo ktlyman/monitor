@@ -7,11 +7,13 @@ in a searchable SQLite database, and serves them through a web UI and MCP server
 ## What It Does
 
 - **Session scanning** -- Discovers and parses JSONL session logs from all Claude Code projects
+- **Deep extraction** -- Extracts per-message token usage, tool invocations, thinking blocks,
+  subagent runs, and session analytics with streaming fragment dedup and Opus 4.6 cost estimates
 - **Knowledge extraction** -- Extracts learnings from MEMORY.md files, CLAUDE.md conventions,
   .claude/rules/, agent-lessons files, and session transcripts
-- **Full-text search** -- SQLite FTS5-powered search across all collected learnings
-- **Web dashboard** -- Single-page app for browsing projects, searching patterns, and
-  exploring session history
+- **Full-text search** -- SQLite FTS5-powered search across all collected learnings and thinking blocks
+- **Web dashboard** -- Single-page app with Analytics tab (API requests, token counts, cost estimates,
+  top tools), project browser, learning search, and thinking block search
 - **MCP server** -- Exposes meta-learnings to Claude Code agents via the Model Context Protocol,
   enabling "learning to learn" across projects
 - **CLI** -- Scan projects, search learnings, and inspect patterns from the terminal
@@ -41,6 +43,12 @@ npm run dev -- stats
 ```bash
 # Full scan of ~/.claude/projects/
 npm run dev -- scan
+
+# Deep scan (extract messages, tools, thinking, analytics)
+npm run dev -- scan --deep
+
+# Force re-extraction of all sessions
+npm run dev -- scan --deep --force
 
 # Scan a specific project
 npm run dev -- scan --project listener

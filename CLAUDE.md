@@ -18,13 +18,14 @@ and learnings from AI-assisted development sessions across all projects.
 ```
 src/
 ├── types/           Core type definitions
-│   └── index.ts       Project, Session, Learning, SearchResult, ScanResult, SystemStats
+│   └── index.ts       Project, Session, Learning, SessionMessage, ToolInvocation,
+│                       ThinkingBlock, SubagentRun, SessionAnalytics, SystemStats
 ├── storage/         SQLite + FTS5 persistence layer
 │   └── database.ts    MonitorDatabase class (schema, migrations, queries, FTS)
 ├── collector/       Filesystem scanner for ~/.claude/projects/
 │   └── scanner.ts     Discovers projects, sessions, MEMORY.md, CLAUDE.md files
-├── analyzer/        Extracts learnings from collected data
-│   └── extractor.ts   Parses JSONL sessions, MEMORY.md, CLAUDE.md, rules/
+├── analyzer/        Extracts learnings and session analytics
+│   └── extractor.ts   Parses JSONL sessions (deep extraction), MEMORY.md, CLAUDE.md, rules/
 ├── server/          HTTP API + static frontend serving
 │   └── api.ts         Node.js HTTP server, JSON API, SSE, static file serving
 ├── mcp/             MCP server for agent integration
