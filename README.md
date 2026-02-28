@@ -8,12 +8,14 @@ in a searchable SQLite database, and serves them through a web UI and MCP server
 
 - **Session scanning** -- Discovers and parses JSONL session logs from all Claude Code projects
 - **Deep extraction** -- Extracts per-message token usage, tool invocations, thinking blocks,
-  subagent runs, and session analytics with streaming fragment dedup and Opus 4.6 cost estimates
+  subagent runs, and session analytics with streaming fragment dedup and per-model cost estimates
+  (Opus 4.6, Sonnet 4, Haiku 4.5)
 - **Knowledge extraction** -- Extracts learnings from MEMORY.md files, CLAUDE.md conventions,
   .claude/rules/, and agent-lessons files
 - **Full-text search** -- SQLite FTS5-powered search across all collected learnings and thinking blocks
-- **Web dashboard** -- Single-page app with Analytics tab (API requests, token counts, cost estimates,
-  top tools), project browser, learning search, and thinking block search
+- **Web dashboard** -- Single-page app with Analytics tab (token counts, cost estimates, tool
+  reliability, model breakdown, expensive sessions, recommendations), project browser, learning
+  search, and thinking block search
 - **MCP server** -- Exposes meta-learnings to Claude Code agents via the Model Context Protocol,
   enabling "learning to learn" across projects
 - **CLI** -- Scan projects, search learnings, and inspect patterns from the terminal
@@ -79,8 +81,14 @@ Add to your Claude Code or Claude Desktop config:
 }
 ```
 
-Build first with `npm run build`, then the MCP server exposes tools for querying
-meta-learnings across all your Claude Code projects.
+Build first with `npm run build`, then the MCP server exposes 6 tools:
+
+- `search_learnings` — Full-text search across all collected learnings
+- `list_projects` — List all discovered projects with session counts
+- `get_project_summary` — Learnings, files, and sessions for a specific project
+- `get_stats` — Database-wide statistics
+- `search_thinking` — Full-text search across thinking blocks
+- `get_recommendations` — Rules-based optimization suggestions (cost, efficiency, reliability)
 
 ## Development
 
