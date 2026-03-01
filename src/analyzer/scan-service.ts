@@ -140,9 +140,14 @@ export async function runScan(
             const sessionMeta = await extractor.extractSessionMeta(jsonlPath, project.dirName);
             const sessionId = sessionMeta.sessionId;
 
-            if (!options.force && db.isSessionDeepExtracted(sessionId)) continue;
+            // Skip if already extracted and file size unchanged (incremental)
+            if (!options.force) {
+              const extractedSize = db.getDeepExtractedFileSize(sessionId);
+              if (extractedSize !== null && extractedSize === sessionMeta.fileSizeBytes) continue;
+            }
 
-            if (options.force) {
+            // Clear stale data before re-extraction
+            if (db.isSessionDeepExtracted(sessionId)) {
               db.clearDeepDataForSession(sessionId);
             }
 

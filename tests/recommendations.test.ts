@@ -107,6 +107,7 @@ describe("generateRecommendations", () => {
       models: "claude-opus-4-6",
       durationSeconds: 3600,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const recs = generateRecommendations(db);
@@ -136,6 +137,7 @@ describe("generateRecommendations", () => {
       models: "claude-opus-4-6",
       durationSeconds: 1800,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const recs = generateRecommendations(db);
@@ -165,6 +167,7 @@ describe("generateRecommendations", () => {
       models: "claude-opus-4-6",
       durationSeconds: 1200,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const recs = generateRecommendations(db);

@@ -62,7 +62,7 @@ server.tool(
     query: z.string().describe("Search query"),
     project: z.string().optional().describe("Project directory name or display name (use list_projects to see available values)"),
     source_type: z.enum(["memory", "claude_md", "rules", "agent_lessons"]).optional().describe("Filter by source type"),
-    category: z.enum(["pattern", "decision", "gotcha", "convention", "bug", "architecture", "tool_usage"]).optional().describe("Filter by category"),
+    category: z.enum(["pattern", "decision", "gotcha", "convention", "bug", "architecture"]).optional().describe("Filter by category"),
     limit: z.number().optional().describe("Max results (default 20)"),
   },
   async (params) => {

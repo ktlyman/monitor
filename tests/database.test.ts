@@ -25,7 +25,7 @@ describe("MonitorDatabase", () => {
 
   // ---- Schema ----
 
-  it("initializes with schema v6", () => {
+  it("initializes with schema v7", () => {
     // Verify all core tables exist by performing simple queries
     expect(() => db.getProjects()).not.toThrow();
     expect(() => db.getStats()).not.toThrow();
@@ -443,6 +443,7 @@ describe("MonitorDatabase", () => {
       models: "claude-opus-4-6",
       durationSeconds: 3600,
       deepExtractedAt: "2026-02-25T12:00:00.000Z",
+      deepExtractedFileSize: 0,
     };
 
     db.upsertSessionAnalytics(analytics);
@@ -456,6 +457,73 @@ describe("MonitorDatabase", () => {
     expect(retrieved!.estimatedCostUsd).toBe(3.25);
     expect(retrieved!.toolBreakdown.Read).toBe(15);
     expect(retrieved!.models).toBe("claude-opus-4-6");
+  });
+
+  // ---- getDeepExtractedFileSize ----
+
+  it("returns null for non-extracted session file size", () => {
+    expect(db.getDeepExtractedFileSize("nonexistent")).toBeNull();
+  });
+
+  it("returns stored file size after deep extraction", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.upsertSessionAnalytics({
+      sessionId: "sess-001",
+      totalInputTokens: 100,
+      totalOutputTokens: 50,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      totalCacheWrite5mTokens: 0,
+      totalCacheWrite1hTokens: 0,
+      estimatedCostUsd: 0.01,
+      toolBreakdown: {},
+      errorCount: 0,
+      totalToolUses: 0,
+      thinkingBlockCount: 0,
+      thinkingCharCount: 0,
+      subagentCount: 0,
+      apiRequestCount: 1,
+      models: "claude-opus-4-6",
+      durationSeconds: 60,
+      deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 12345,
+    });
+    expect(db.getDeepExtractedFileSize("sess-001")).toBe(12345);
+  });
+
+  it("detects file size change for incremental re-extraction", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    // First extraction at 1000 bytes
+    db.upsertSessionAnalytics({
+      sessionId: "sess-001",
+      totalInputTokens: 100,
+      totalOutputTokens: 50,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      totalCacheWrite5mTokens: 0,
+      totalCacheWrite1hTokens: 0,
+      estimatedCostUsd: 0.01,
+      toolBreakdown: {},
+      errorCount: 0,
+      totalToolUses: 0,
+      thinkingBlockCount: 0,
+      thinkingCharCount: 0,
+      subagentCount: 0,
+      apiRequestCount: 1,
+      models: "claude-opus-4-6",
+      durationSeconds: 60,
+      deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 1000,
+    });
+
+    // Session file has grown
+    const currentFileSize = 2000;
+    const extractedSize = db.getDeepExtractedFileSize("sess-001");
+    expect(extractedSize).toBe(1000);
+    expect(extractedSize !== currentFileSize).toBe(true); // needs re-extraction
   });
 
   // ---- clearDeepDataForSession ----
@@ -486,6 +554,7 @@ describe("MonitorDatabase", () => {
       thinkingCharCount: 13, subagentCount: 1, apiRequestCount: 1,
       models: "test", durationSeconds: 60,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     // Verify everything exists
@@ -534,6 +603,7 @@ describe("MonitorDatabase", () => {
       thinkingCharCount: 4, subagentCount: 0, apiRequestCount: 5,
       models: "claude-opus-4-6", durationSeconds: 60,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const stats = db.getAnalyticsStats();
@@ -565,6 +635,7 @@ describe("MonitorDatabase", () => {
       thinkingCharCount: 0, subagentCount: 0, apiRequestCount: 1,
       models: "test", durationSeconds: 30,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const stats = db.getStats();
@@ -629,6 +700,7 @@ describe("MonitorDatabase", () => {
       thinkingCharCount: 2000, subagentCount: 0, apiRequestCount: 8,
       models: "claude-opus-4-6", durationSeconds: 600,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const coverage = db.getProjectAnalyticsCoverage();
@@ -654,6 +726,7 @@ describe("MonitorDatabase", () => {
       thinkingCharCount: 5000, subagentCount: 0, apiRequestCount: 15,
       models: "claude-opus-4-6", durationSeconds: 1800,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
     db.upsertSessionAnalytics({
       sessionId: "sess-2", totalInputTokens: 200000, totalOutputTokens: 100000,
@@ -664,6 +737,7 @@ describe("MonitorDatabase", () => {
       thinkingCharCount: 10000, subagentCount: 0, apiRequestCount: 30,
       models: "claude-opus-4-6", durationSeconds: 3600,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: 0,
     });
 
     const expensive = db.getMostExpensiveSessions(2);

@@ -68,26 +68,15 @@ export class ProjectScanner {
     return this._readFileIfExists(claudePath);
   }
 
-  /** Read .claude/rules/ files from the project's source directory. */
+  /** Read .claude/rules/ files recursively from the project's source directory. */
   async readRuleFiles(
     projectPath: string
   ): Promise<Array<{ path: string; content: string }>> {
-    const rulesDir = join(projectPath, ".claude", "rules");
-    const results: Array<{ path: string; content: string }> = [];
-
-    try {
-      const entries = await readdir(rulesDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-        const filePath = join(rulesDir, entry.name);
-        const content = await readFile(filePath, "utf-8");
-        results.push({ path: entry.name, content });
-      }
-    } catch {
-      // Rules directory may not exist — that's fine
-    }
-
-    return results;
+    const collected: CollectedFile[] = [];
+    await this._collectDirFiles(
+      join(projectPath, ".claude", "rules"), "", "", "rules", "", collected
+    );
+    return collected.map((f) => ({ path: f.relativePath, content: f.content }));
   }
 
   /** Read .claude/agent-lessons.md or agent-learnings.md if present. */
@@ -131,11 +120,8 @@ export class ProjectScanner {
       files.push({ projectName: pn, projectDirName: pd, fileType: "readme", relativePath: "README.md", content: readme });
     }
 
-    // .claude/rules/*.md
-    const rules = await this.readRuleFiles(project.projectPath);
-    for (const rule of rules) {
-      files.push({ projectName: pn, projectDirName: pd, fileType: "rules", relativePath: `.claude/rules/${rule.path}`, content: rule.content });
-    }
+    // .claude/rules/**/*.md (recursive)
+    await this._collectDirFiles(join(project.projectPath, ".claude", "rules"), pn, pd, "rules", ".claude/rules/", files);
 
     // .claude/agent-lessons.md or agent-learnings.md
     for (const name of ["agent-lessons.md", "agent-learnings.md"]) {

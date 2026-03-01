@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import type {
   Learning,
@@ -501,6 +501,7 @@ export class LearningExtractor {
       models: [...modelSet].join(","),
       durationSeconds,
       deepExtractedAt: new Date().toISOString(),
+      deepExtractedFileSize: statSync(jsonlPath).size,
     };
 
     return { messages, toolInvocations, thinkingBlocks, analytics, parseErrors };

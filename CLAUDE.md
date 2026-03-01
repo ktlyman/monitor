@@ -23,10 +23,10 @@ src/
 ├── storage/         SQLite + FTS5 persistence layer
 │   └── database.ts    MonitorDatabase class (schema, migrations, queries, FTS)
 ├── collector/       Filesystem scanner for ~/.claude/projects/
-│   └── scanner.ts     Discovers projects, sessions, MEMORY.md, CLAUDE.md files
+│   └── scanner.ts     Discovers projects, sessions, docs (recursive rules/skills/commands)
 ├── analyzer/        Extracts learnings and session analytics
 │   ├── extractor.ts   Parses JSONL sessions (deep extraction), MEMORY.md, CLAUDE.md, rules/
-│   ├── scan-service.ts Shared scan orchestration (used by CLI + API)
+│   ├── scan-service.ts Scan orchestration with incremental deep extraction
 │   └── recommendations.ts Rules-based optimization recommendations
 ├── server/          HTTP API + static frontend serving
 │   ├── api.ts         Node.js HTTP server, JSON API, static file serving

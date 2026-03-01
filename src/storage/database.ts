@@ -19,7 +19,7 @@ import type {
   SystemStats,
 } from "../types/index.js";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -271,6 +271,7 @@ export class MonitorDatabase {
       if (currentVersion < 4) this._migrateV4();
       if (currentVersion < 5) this._migrateV5();
       if (currentVersion < 6) this._migrateV6();
+      if (currentVersion < 7) this._migrateV7();
       this.db
         .prepare(
           "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -453,6 +454,7 @@ export class MonitorDatabase {
             models: r.models as string,
             durationSeconds: r.duration_seconds as number,
             deepExtractedAt: r.deep_extracted_at as string,
+            deepExtractedFileSize: (r.deep_extracted_file_size as number) ?? 0,
           },
         };
       }
@@ -856,8 +858,9 @@ export class MonitorDatabase {
           total_cache_write_5m_tokens, total_cache_write_1h_tokens,
           estimated_cost_usd, tool_breakdown, error_count, total_tool_uses,
           thinking_block_count, thinking_char_count, subagent_count,
-          api_request_count, models, duration_seconds, deep_extracted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          api_request_count, models, duration_seconds, deep_extracted_at,
+          deep_extracted_file_size)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            total_input_tokens = excluded.total_input_tokens,
            total_output_tokens = excluded.total_output_tokens,
@@ -875,7 +878,8 @@ export class MonitorDatabase {
            api_request_count = excluded.api_request_count,
            models = excluded.models,
            duration_seconds = excluded.duration_seconds,
-           deep_extracted_at = excluded.deep_extracted_at`
+           deep_extracted_at = excluded.deep_extracted_at,
+           deep_extracted_file_size = excluded.deep_extracted_file_size`
       )
       .run(
         analytics.sessionId, analytics.totalInputTokens, analytics.totalOutputTokens,
@@ -886,7 +890,7 @@ export class MonitorDatabase {
         analytics.thinkingBlockCount, analytics.thinkingCharCount,
         analytics.subagentCount, analytics.apiRequestCount,
         analytics.models, analytics.durationSeconds,
-        analytics.deepExtractedAt
+        analytics.deepExtractedAt, analytics.deepExtractedFileSize
       );
   }
 
@@ -896,6 +900,14 @@ export class MonitorDatabase {
       .prepare("SELECT 1 FROM session_analytics WHERE session_id = ?")
       .get(sessionId);
     return row !== undefined;
+  }
+
+  /** Get the file size at the time of deep extraction, or null if not yet extracted. */
+  getDeepExtractedFileSize(sessionId: string): number | null {
+    const row = this.db
+      .prepare("SELECT deep_extracted_file_size FROM session_analytics WHERE session_id = ?")
+      .get(sessionId) as { deep_extracted_file_size: number } | undefined;
+    return row?.deep_extracted_file_size ?? null;
   }
 
   /** Clear all deep-extraction data for a session. */
@@ -936,6 +948,7 @@ export class MonitorDatabase {
       models: r.models as string,
       durationSeconds: r.duration_seconds as number,
       deepExtractedAt: r.deep_extracted_at as string,
+      deepExtractedFileSize: (r.deep_extracted_file_size as number) ?? 0,
     };
   }
 
@@ -1269,6 +1282,11 @@ export class MonitorDatabase {
         VALUES (new.id, new.content, new.session_id, new.entry_type);
       END
     `);
+  }
+
+  private _migrateV7(): void {
+    // Track file size at deep extraction time for incremental re-extraction
+    this.db.exec(`ALTER TABLE session_analytics ADD COLUMN deep_extracted_file_size INTEGER NOT NULL DEFAULT 0`);
   }
 
   // ---- New query methods for analytics & MCP ----

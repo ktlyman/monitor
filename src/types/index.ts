@@ -60,8 +60,7 @@ export type LearningCategory =
   | "gotcha"
   | "convention"
   | "bug"
-  | "architecture"
-  | "tool_usage";
+  | "architecture";
 
 /** A discrete learning extracted from project data. */
 export interface Learning {
@@ -265,6 +264,8 @@ export interface SessionAnalytics {
   models: string;
   durationSeconds: number;
   deepExtractedAt: string;
+  /** JSONL file size in bytes at time of deep extraction (for incremental refresh). */
+  deepExtractedFileSize: number;
 }
 
 // ---- Scan types ----

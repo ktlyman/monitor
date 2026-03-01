@@ -199,5 +199,69 @@ describe("ProjectScanner", () => {
       expect(memFile).toBeDefined();
       expect(memFile!.content).toContain("Memory content");
     });
+
+    it("collects rules files recursively from nested directories", async () => {
+      // Create a project source dir with nested .claude/rules/
+      const sourceDir = join(tempDir, "source-project");
+      const rulesDir = join(sourceDir, ".claude", "rules");
+      const nestedDir = join(rulesDir, "subdir");
+      const deepDir = join(rulesDir, "subdir", "deep");
+      mkdirSync(deepDir, { recursive: true });
+
+      writeFileSync(join(rulesDir, "top-level.md"), "# Top level rule", "utf-8");
+      writeFileSync(join(nestedDir, "nested.md"), "# Nested rule", "utf-8");
+      writeFileSync(join(deepDir, "deep.md"), "# Deep rule", "utf-8");
+      writeFileSync(join(rulesDir, "not-md.txt"), "should be skipped", "utf-8");
+
+      const scanner = new ProjectScanner(tempDir);
+      const files = await scanner.collectAllFiles({
+        dirName: "test-project",
+        name: "testapp",
+        projectPath: sourceDir,
+        sessionCount: 0,
+        hasMemory: false,
+        hasClaudeMd: false,
+        lastScannedAt: new Date().toISOString(),
+      });
+
+      const ruleFiles = files.filter((f) => f.fileType === "rules");
+      expect(ruleFiles).toHaveLength(3);
+
+      const paths = ruleFiles.map((f) => f.relativePath).sort();
+      expect(paths).toContain(".claude/rules/top-level.md");
+      expect(paths).toContain(".claude/rules/subdir/nested.md");
+      expect(paths).toContain(".claude/rules/subdir/deep/deep.md");
+    });
+  });
+
+  // ---- readRuleFiles ----
+
+  describe("readRuleFiles", () => {
+    it("reads rules recursively and returns relative paths", async () => {
+      const sourceDir = join(tempDir, "source-project");
+      const rulesDir = join(sourceDir, ".claude", "rules");
+      const nestedDir = join(rulesDir, "team");
+      mkdirSync(nestedDir, { recursive: true });
+
+      writeFileSync(join(rulesDir, "main.md"), "# Main rule", "utf-8");
+      writeFileSync(join(nestedDir, "team-rule.md"), "# Team rule", "utf-8");
+
+      const scanner = new ProjectScanner(tempDir);
+      const rules = await scanner.readRuleFiles(sourceDir);
+      expect(rules).toHaveLength(2);
+
+      const paths = rules.map((r) => r.path).sort();
+      expect(paths).toContain("main.md");
+      expect(paths).toContain("team/team-rule.md");
+    });
+
+    it("returns empty array when rules directory does not exist", async () => {
+      const sourceDir = join(tempDir, "no-rules-project");
+      mkdirSync(sourceDir, { recursive: true });
+
+      const scanner = new ProjectScanner(tempDir);
+      const rules = await scanner.readRuleFiles(sourceDir);
+      expect(rules).toEqual([]);
+    });
   });
 });

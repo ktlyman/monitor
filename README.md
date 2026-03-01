@@ -9,9 +9,10 @@ in a searchable SQLite database, and serves them through a web UI and MCP server
 - **Session scanning** -- Discovers and parses JSONL session logs from all Claude Code projects
 - **Deep extraction** -- Extracts per-message token usage, tool invocations, thinking blocks,
   subagent runs, and session analytics with streaming fragment dedup and per-model cost estimates
-  (Opus 4.6, Sonnet 4.6, Sonnet 4, Haiku 4.5)
+  (Opus 4.6, Sonnet 4.6, Sonnet 4, Haiku 4.5). Incremental: skips sessions whose file size
+  hasn't changed since last extraction
 - **Knowledge extraction** -- Extracts learnings from MEMORY.md files, CLAUDE.md conventions,
-  .claude/rules/, and agent-lessons files
+  .claude/rules/ (recursive), and agent-lessons files
 - **Full-text search** -- SQLite FTS5-powered search across all collected learnings and thinking blocks
 - **Web dashboard** -- Single-page app with Analytics tab (token counts, cost estimates, tool
   reliability, model breakdown, expensive sessions, recommendations), project browser, learning
@@ -67,21 +68,27 @@ npm run dev -- stats
 
 ## MCP Server
 
-Add to your Claude Code or Claude Desktop config:
+Build first with `npm run build`, then add to your Claude Code MCP config
+(`~/.claude/claude_desktop_config.json` or project-level `.mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "monitor": {
       "command": "node",
-      "args": ["build/mcp/server.js"],
-      "cwd": "<path-to-monitor>"
+      "args": ["/absolute/path/to/monitor/build/mcp/server.js"],
+      "env": {
+        "DB_PATH": "/absolute/path/to/monitor/monitor.db"
+      }
     }
   }
 }
 ```
 
-Build first with `npm run build`, then the MCP server exposes 14 tools:
+`DB_PATH` defaults to `monitor.db` in the working directory. Use an absolute path
+to ensure the MCP server finds your database regardless of where it's launched from.
+
+The MCP server exposes 14 tools:
 
 - `search_learnings` — Full-text search across learnings (memory, claude_md, rules, agent_lessons)
 - `list_projects` — List all discovered projects with directory names and session counts
