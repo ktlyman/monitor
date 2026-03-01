@@ -53,22 +53,26 @@ const DEEP_HINT = "Requires deep-extracted sessions — run 'monitor scan --deep
 // ---- search_learnings ----
 server.tool(
   "search_learnings",
-  "Search learnings extracted from MEMORY.md, CLAUDE.md, and rules files across all projects. " +
+  "Search learnings extracted from MEMORY.md (memory), CLAUDE.md (claude_md), " +
+    ".claude/rules/ (rules), and agent-lessons.md (agent_lessons) across all projects. " +
     "Returns project name, source, and matching snippet. " +
+    "For skills/commands, use list_project_files + get_file_content instead. " +
     "Complements search_thinking (reasoning) and search_messages (conversation content).",
   {
     query: z.string().describe("Search query"),
-    project: z.string().optional().describe("Filter by project name"),
-    source_type: z.enum(["memory", "claude_md", "session", "rules", "agent_lessons", "skills"]).optional().describe("Filter by source type"),
+    project: z.string().optional().describe("Project directory name or display name (use list_projects to see available values)"),
+    source_type: z.enum(["memory", "claude_md", "rules", "agent_lessons"]).optional().describe("Filter by source type"),
     category: z.enum(["pattern", "decision", "gotcha", "convention", "bug", "architecture", "tool_usage"]).optional().describe("Filter by category"),
     limit: z.number().optional().describe("Max results (default 20)"),
   },
   async (params) => {
     try {
+      const resolved = params.project ? db.resolveProject(params.project) : null;
       const results = db.search({
         query: params.query,
         limit: params.limit ?? 20,
-        projectNames: params.project ? [params.project] : undefined,
+        projectDirNames: resolved ? [resolved.dirName] : undefined,
+        projectNames: !resolved && params.project ? [params.project] : undefined,
         sourceTypes: params.source_type ? [params.source_type] : undefined,
         categories: params.category ? [params.category] : undefined,
       });
@@ -107,7 +111,7 @@ server.tool(
             p.hasMemory ? "MEMORY" : "",
             p.hasClaudeMd ? "CLAUDE.md" : "",
           ].filter(Boolean).join(", ");
-          return `${p.name} — ${p.sessionCount} sessions${flags ? ` [${flags}]` : ""}`;
+          return `${p.name} (${p.dirName}) — ${p.sessionCount} sessions${flags ? ` [${flags}]` : ""}`;
         })
         .join("\n");
 
@@ -124,11 +128,11 @@ server.tool(
   "Get learnings, documentation files, and session stats for a project. " +
     "Use get_file_content to read specific files, or get_session_analytics for session details.",
   {
-    project: z.string().describe("Project name"),
+    project: z.string().describe("Project directory name or display name (use list_projects to see available values)"),
   },
   async (params) => {
     try {
-      const project = db.getProjectByName(params.project);
+      const project = db.resolveProject(params.project);
       if (!project) return notFound("project", params.project);
 
       const learnings = db.getLearningsForProject(project.dirName);
@@ -137,7 +141,7 @@ server.tool(
 
       const sections: string[] = [];
 
-      sections.push(`# ${project.name}`);
+      sections.push(`# ${project.name} (${project.dirName})`);
       sections.push(`Path: ${redactPath(project.projectPath) ?? "unknown"}`);
       sections.push(`Sessions: ${sessions.length}, Learnings: ${learnings.length}, Files: ${files.length}`);
 
@@ -276,11 +280,11 @@ server.tool(
   "List documentation files for a project (CLAUDE.md, rules, memory, skills, etc.). " +
     "Use get_file_content to read a specific file's contents.",
   {
-    project: z.string().describe("Project name"),
+    project: z.string().describe("Project directory name or display name (use list_projects to see available values)"),
   },
   async (params) => {
     try {
-      const project = db.getProjectByName(params.project);
+      const project = db.resolveProject(params.project);
       if (!project) return notFound("project", params.project);
       const files = db.getProjectFiles(project.dirName);
       if (files.length === 0) return emptyResult("files", `No docs collected for "${params.project}".`);
@@ -300,12 +304,12 @@ server.tool(
   "Retrieve the full content of a documentation file from a project. " +
     "Use list_project_files to discover available paths.",
   {
-    project: z.string().describe("Project name"),
+    project: z.string().describe("Project directory name or display name (use list_projects to see available values)"),
     path: z.string().describe("Relative file path (e.g. 'CLAUDE.md', '.claude/rules/scanner-trust.md')"),
   },
   async (params) => {
     try {
-      const project = db.getProjectByName(params.project);
+      const project = db.resolveProject(params.project);
       if (!project) return notFound("project", params.project);
       const file = db.getProjectFile(project.dirName, params.path);
       if (!file) return notFound("file", params.path);

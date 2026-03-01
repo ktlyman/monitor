@@ -684,6 +684,76 @@ describe("MonitorDatabase", () => {
     expect(notFound).toBeNull();
   });
 
+  // ---- resolveProject ----
+
+  it("resolves project by dir_name (primary key)", () => {
+    db.upsertProject(testProject);
+    const found = db.resolveProject("-Users-kevin-Projects-testapp");
+    expect(found).not.toBeNull();
+    expect(found!.name).toBe("testapp");
+  });
+
+  it("resolves project by name as fallback", () => {
+    db.upsertProject(testProject);
+    const found = db.resolveProject("testapp");
+    expect(found).not.toBeNull();
+    expect(found!.dirName).toBe("-Users-kevin-Projects-testapp");
+  });
+
+  it("returns null when neither dir_name nor name matches", () => {
+    db.upsertProject(testProject);
+    const found = db.resolveProject("nonexistent");
+    expect(found).toBeNull();
+  });
+
+  it("prefers dir_name over name on collision", () => {
+    db.upsertProject(testProject);
+    // Insert a second project whose dir_name happens to be "testapp"
+    db.upsertProject({
+      dirName: "testapp",
+      name: "collision",
+      projectPath: "/other/testapp",
+      sessionCount: 1,
+      hasMemory: false,
+      hasClaudeMd: false,
+      lastScannedAt: new Date().toISOString(),
+    });
+    const found = db.resolveProject("testapp");
+    // Should match the one where "testapp" is the dir_name, not the name
+    expect(found!.dirName).toBe("testapp");
+    expect(found!.name).toBe("collision");
+  });
+
+  // ---- search with projectDirNames ----
+
+  it("searches learnings filtered by projectDirNames", () => {
+    db.insertLearning({
+      projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sourceType: "memory",
+      sourcePath: "memory/MEMORY.md",
+      content: "Use SQLite for data storage and persistence",
+      category: "architecture",
+      extractedAt: new Date().toISOString(),
+    });
+    db.insertLearning({
+      projectName: "other",
+      projectDirName: "-Users-kevin-Projects-other",
+      sourceType: "memory",
+      sourcePath: "memory/MEMORY.md",
+      content: "Use SQLite for other project persistence",
+      category: "architecture",
+      extractedAt: new Date().toISOString(),
+    });
+
+    const results = db.search({
+      query: "SQLite persistence",
+      projectDirNames: ["-Users-kevin-Projects-testapp"],
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0].learning.projectDirName).toBe("-Users-kevin-Projects-testapp");
+  });
+
   // ---- getLearningsForProject ----
 
   it("gets learnings for a project by dirName", () => {

@@ -76,10 +76,12 @@ program
       const { MonitorDatabase } = await import("../storage/database.js");
       const db = new MonitorDatabase(opts.db);
 
+      const resolved = opts.project ? db.resolveProject(opts.project) : null;
       const results = db.search({
         query,
         limit: parseInt(opts.limit, 10),
-        projectNames: opts.project ? [opts.project] : undefined,
+        projectDirNames: resolved ? [resolved.dirName] : undefined,
+        projectNames: !resolved && opts.project ? [opts.project] : undefined,
       });
 
       if (results.length === 0) {

@@ -460,7 +460,7 @@
         placeholder.textContent = '';
         var el = document.getElementById('projectList');
         el.innerHTML = data.projects.map(function(p) {
-          return '<div class="project-card" onclick="selectProject(\'' + esc(p.name) + '\')">' +
+          return '<div class="project-card" data-dirname="' + esc(p.dirName) + '" onclick="selectProject(\'' + esc(p.dirName) + '\', \'' + esc(p.name) + '\')">' +
             '<div class="name">' + esc(p.name) + '</div>' +
             '<div class="count">' + p.fileCount + ' files &middot; ' + p.sessionCount + ' sessions</div>' +
             '</div>';
@@ -470,21 +470,22 @@
       }
     }
 
-    async function selectProject(name) {
-      selectedProject = name;
+    async function selectProject(dirName, name) {
+      selectedProject = dirName;
       // Highlight active project card
       document.querySelectorAll('.project-card').forEach(function(c) {
-        c.classList.toggle('active', c.querySelector('.name').textContent === name);
+        c.classList.toggle('active', c.dataset.dirname === dirName);
       });
 
       var container = document.getElementById('fileListContainer');
       var placeholder = document.getElementById('filesPlaceholder');
+      var displayName = name || dirName;
       try {
-        var res = await fetch('/api/files/' + encodeURIComponent(name));
+        var res = await fetch('/api/files/' + encodeURIComponent(dirName));
         var data = await res.json();
         if (!data.files || data.files.length === 0) {
           container.innerHTML = '';
-          placeholder.textContent = 'No files collected for ' + esc(name) + '. Run: npm run dev -- scan';
+          placeholder.textContent = 'No files collected for ' + esc(displayName) + '. Run: npm run dev -- scan';
           return;
         }
         placeholder.textContent = '';
@@ -516,7 +517,7 @@
         var lastSeen = new Date(f.lastSeenAt).toLocaleDateString();
 
         container.innerHTML =
-          '<span class="back-link" onclick="selectProject(\'' + esc(projectName) + '\')">&larr; Back to file list</span>' +
+          '<span class="back-link" onclick="selectProject(\'' + esc(projectName) + '\', \'\')">&larr; Back to file list</span>' +
           '<div class="file-viewer">' +
             '<div class="file-viewer-header">' +
               '<span class="path">' + esc(f.relativePath) + '</span>' +

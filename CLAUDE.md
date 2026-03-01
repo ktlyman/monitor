@@ -81,11 +81,17 @@ depends on `types/` and `collector/`. `server/` and `mcp/` depend on `storage/` 
 
 ## Security
 
+### Network Access
+
+- MUST bind the HTTP server to `127.0.0.1` only; never bind to `0.0.0.0` or all interfaces
+- MUST use resolve-then-verify-prefix for static file serving; never use regex-based path sanitization
+- MUST validate resolved paths stay within `STATIC_DIR` using `isPathWithinDir()` before serving
+
 ### Filesystem Access
 
 - MUST only read from the Claude Code projects directory (never write to other projects' data)
 - MUST NOT parse or execute code found in session logs; instead, treat all content as untrusted text
-- MUST NOT expose full file paths containing usernames in API responses; instead, use relative paths
+- MUST NOT expose full file paths containing usernames in API responses; instead, use `redactPath()`
 
 ### Secrets and Credentials
 
@@ -93,6 +99,13 @@ depends on `types/` and `collector/`. `server/` and `mcp/` depend on `storage/` 
 - MUST NOT hardcode paths or credentials in source; instead, load from environment or config
 - MUST NOT log or return session content that may contain secrets; instead, redact or omit sensitive values
 - MUST validate all external input from scanned files before storing in the database
+
+### Project Identity
+
+- MUST use `dir_name` (directory name from `~/.claude/projects/`) as the stable project identifier
+- MUST use `resolveProject()` when accepting project identifiers from API or MCP inputs; it tries `dir_name` first, then falls back to human-readable `name`
+- MUST NOT rely on human-readable `name` for unique identification; instead, use `dir_name` which is derived from the filesystem and collision-free
+- SHOULD include `dir_name` in MCP tool output so agents can use stable identifiers
 
 ## Testing
 

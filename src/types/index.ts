@@ -50,10 +50,8 @@ export interface Session {
 export type LearningSource =
   | "memory"
   | "claude_md"
-  | "session"
   | "rules"
-  | "agent_lessons"
-  | "skills";
+  | "agent_lessons";
 
 /** Categories for learnings. */
 export type LearningCategory =
@@ -100,8 +98,10 @@ export interface SearchResult {
 export interface SearchOptions {
   /** Free-text search query */
   query: string;
-  /** Filter by project names */
+  /** Filter by project display names (prefer projectDirNames for stable matching) */
   projectNames?: string[];
+  /** Filter by project directory names (stable identifiers) */
+  projectDirNames?: string[];
   /** Filter by source type */
   sourceTypes?: LearningSource[];
   /** Filter by category */

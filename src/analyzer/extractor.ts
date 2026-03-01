@@ -30,9 +30,10 @@ interface ModelPricing {
 }
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
-  "claude-opus-4-6":           { input: 5,   output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10,  cacheRead: 0.5  },
-  "claude-sonnet-4-20250514":  { input: 3,   output: 15, cacheWrite5m: 3.75, cacheWrite1h: 6,   cacheRead: 0.3  },
-  "claude-haiku-4-5-20251001": { input: 0.8, output: 4,  cacheWrite5m: 1,    cacheWrite1h: 1.6, cacheRead: 0.08 },
+  "claude-opus-4-6":           { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5  },
+  "claude-sonnet-4-6":         { input: 3, output: 15, cacheWrite5m: 3.75, cacheWrite1h: 6,  cacheRead: 0.3  },
+  "claude-sonnet-4-20250514":  { input: 3, output: 15, cacheWrite5m: 3.75, cacheWrite1h: 6,  cacheRead: 0.3  },
+  "claude-haiku-4-5-20251001": { input: 1, output: 5,  cacheWrite5m: 1.25, cacheWrite1h: 2,  cacheRead: 0.10 },
 };
 
 /** Default pricing (Opus 4.6) for unknown models. */
@@ -48,6 +49,13 @@ function getPricing(model: string | null): ModelPricing {
   }
   return DEFAULT_PRICING;
 }
+
+/**
+ * Cost estimation caveat: costs are aggregated per session from assistant message
+ * token counts, not per API request. Actual billing may differ due to per-request
+ * cache slot computation and long-context premiums (>200K input tokens).
+ * For billing-grade accuracy, a per-request costing table would be needed.
+ */
 
 /** Maximum character length for stored message content. */
 const MAX_MESSAGE_CONTENT_LENGTH = 10_000;

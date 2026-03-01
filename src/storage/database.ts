@@ -352,11 +352,8 @@ export class MonitorDatabase {
       );
   }
 
-  getProjects(): Project[] {
-    const rows = this.db
-      .prepare("SELECT * FROM projects ORDER BY name")
-      .all() as Array<Record<string, unknown>>;
-    return rows.map((r) => ({
+  private _mapProject(r: Record<string, unknown>): Project {
+    return {
       dirName: r.dir_name as string,
       name: r.name as string,
       projectPath: r.project_path as string,
@@ -364,7 +361,14 @@ export class MonitorDatabase {
       hasMemory: (r.has_memory as number) === 1,
       hasClaudeMd: (r.has_claude_md as number) === 1,
       lastScannedAt: r.last_scanned_at as string,
-    }));
+    };
+  }
+
+  getProjects(): Project[] {
+    const rows = this.db
+      .prepare("SELECT * FROM projects ORDER BY name")
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((r) => this._mapProject(r));
   }
 
   // ---- Session methods ----
@@ -490,6 +494,12 @@ export class MonitorDatabase {
     let whereClause = "";
     const filters: string[] = [];
 
+    if (options.projectDirNames?.length) {
+      filters.push(
+        `l.project_dir_name IN (${options.projectDirNames.map(() => "?").join(",")})`
+      );
+      params.push(...options.projectDirNames);
+    }
     if (options.projectNames?.length) {
       filters.push(
         `l.project_name IN (${options.projectNames.map(() => "?").join(",")})`
@@ -1269,15 +1279,22 @@ export class MonitorDatabase {
       .prepare("SELECT * FROM projects WHERE name = ? LIMIT 1")
       .get(name) as Record<string, unknown> | undefined;
     if (!r) return null;
-    return {
-      dirName: r.dir_name as string,
-      name: r.name as string,
-      projectPath: r.project_path as string,
-      sessionCount: r.session_count as number,
-      hasMemory: (r.has_memory as number) === 1,
-      hasClaudeMd: (r.has_claude_md as number) === 1,
-      lastScannedAt: r.last_scanned_at as string,
-    };
+    return this._mapProject(r);
+  }
+
+  /** Resolve a project by dir_name (primary key) first, then fall back to name. */
+  resolveProject(identifier: string): Project | null {
+    const byDirName = this.db
+      .prepare("SELECT * FROM projects WHERE dir_name = ?")
+      .get(identifier) as Record<string, unknown> | undefined;
+    if (byDirName) return this._mapProject(byDirName);
+
+    const byName = this.db
+      .prepare("SELECT * FROM projects WHERE name = ? LIMIT 1")
+      .get(identifier) as Record<string, unknown> | undefined;
+    if (byName) return this._mapProject(byName);
+
+    return null;
   }
 
   /** Get all learnings for a project by dir_name. */

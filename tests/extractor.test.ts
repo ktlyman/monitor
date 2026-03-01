@@ -385,7 +385,7 @@ describe("LearningExtractor", () => {
     });
 
     it("computes mixed-model costs using per-model pricing", async () => {
-      // Opus 4.6: 1M input = $5, Haiku 4.5: 1M input = $0.80
+      // Opus 4.6: 1M input = $5, Haiku 4.5: 1M input = $1
       const filePath = writeJsonl([
         {
           type: "assistant", timestamp: "T1", uuid: "a1",
@@ -405,8 +405,8 @@ describe("LearningExtractor", () => {
       ]);
 
       const result = await extractor.extractSessionDeep(filePath, "sess-1");
-      // Opus: 1M * $5/M = $5.00, Haiku: 1M * $0.80/M = $0.80
-      expect(result.analytics.estimatedCostUsd).toBeCloseTo(5.80, 2);
+      // Opus: 1M * $5/M = $5.00, Haiku: 1M * $1/M = $1.00
+      expect(result.analytics.estimatedCostUsd).toBeCloseTo(6.00, 2);
     });
 
     it("falls back to Opus pricing for unknown model", async () => {
@@ -423,6 +423,38 @@ describe("LearningExtractor", () => {
       const result = await extractor.extractSessionDeep(filePath, "sess-1");
       // Falls back to Opus 4.6 pricing: $5/M input
       expect(result.analytics.estimatedCostUsd).toBeCloseTo(5.0, 2);
+    });
+
+    it("uses Sonnet 4.6 pricing for exact model match", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a1",
+          message: {
+            model: "claude-sonnet-4-6", content: [], stop_reason: "end_turn",
+            usage: { input_tokens: 1_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } },
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // Sonnet 4.6: $3/M input
+      expect(result.analytics.estimatedCostUsd).toBeCloseTo(3.0, 2);
+    });
+
+    it("matches Sonnet 4.6 with date suffix via prefix", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a1",
+          message: {
+            model: "claude-sonnet-4-6-20260201", content: [], stop_reason: "end_turn",
+            usage: { input_tokens: 1_000_000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } },
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // Sonnet 4.6 prefix match: $3/M input
+      expect(result.analytics.estimatedCostUsd).toBeCloseTo(3.0, 2);
     });
 
     it("handles empty JSONL file", async () => {

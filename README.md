@@ -9,7 +9,7 @@ in a searchable SQLite database, and serves them through a web UI and MCP server
 - **Session scanning** -- Discovers and parses JSONL session logs from all Claude Code projects
 - **Deep extraction** -- Extracts per-message token usage, tool invocations, thinking blocks,
   subagent runs, and session analytics with streaming fragment dedup and per-model cost estimates
-  (Opus 4.6, Sonnet 4, Haiku 4.5)
+  (Opus 4.6, Sonnet 4.6, Sonnet 4, Haiku 4.5)
 - **Knowledge extraction** -- Extracts learnings from MEMORY.md files, CLAUDE.md conventions,
   .claude/rules/, and agent-lessons files
 - **Full-text search** -- SQLite FTS5-powered search across all collected learnings and thinking blocks
@@ -83,9 +83,9 @@ Add to your Claude Code or Claude Desktop config:
 
 Build first with `npm run build`, then the MCP server exposes 14 tools:
 
-- `search_learnings` — Full-text search across all collected learnings
-- `list_projects` — List all discovered projects with session counts
-- `get_project_summary` — Learnings, files, and sessions for a specific project
+- `search_learnings` — Full-text search across learnings (memory, claude_md, rules, agent_lessons)
+- `list_projects` — List all discovered projects with directory names and session counts
+- `get_project_summary` — Learnings, files, and sessions for a project (accepts dir_name or name)
 - `get_stats` — Database-wide statistics
 - `search_thinking` — Full-text search across thinking blocks
 - `get_recommendations` — Rules-based optimization suggestions (cost, efficiency, reliability)

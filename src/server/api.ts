@@ -35,6 +35,11 @@ const MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+/** Check whether a resolved path stays within a base directory. */
+export function isPathWithinDir(baseDir: string, resolvedPath: string): boolean {
+  return resolvedPath === baseDir || resolvedPath.startsWith(baseDir + "/");
+}
+
 function sendJson(res: ServerResponse, data: unknown, status = 200): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
@@ -149,12 +154,12 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // GET /api/files/:project — list files for a project (accepts name, resolves to dirName)
+    // GET /api/files/:project — list files for a project (accepts dirName or name)
     const filesMatch = pathname.match(/^\/api\/files\/([^/]+)$/);
     if (filesMatch && method === "GET") {
-      const projectName = decodeURIComponent(filesMatch[1]);
-      const project = db.getProjectByName(projectName);
-      const dirName = project?.dirName ?? projectName;
+      const projectId = decodeURIComponent(filesMatch[1]);
+      const project = db.resolveProject(projectId);
+      const dirName = project?.dirName ?? projectId;
       const files = db.getProjectFiles(dirName);
       // Return metadata without full content for listing
       const listing = files.map((f) => ({
@@ -174,9 +179,9 @@ const server = createServer(async (req, res) => {
     // GET /api/files/:project/content?path=<relativePath> — get file content
     const fileContentMatch = pathname.match(/^\/api\/files\/([^/]+)\/content$/);
     if (fileContentMatch && method === "GET") {
-      const projectName = decodeURIComponent(fileContentMatch[1]);
-      const project = db.getProjectByName(projectName);
-      const dirName = project?.dirName ?? projectName;
+      const projectId = decodeURIComponent(fileContentMatch[1]);
+      const project = db.resolveProject(projectId);
+      const dirName = project?.dirName ?? projectId;
       const relativePath = url.searchParams.get("path");
       if (!relativePath) {
         sendError(res, "Missing path query parameter");
@@ -194,9 +199,9 @@ const server = createServer(async (req, res) => {
     // GET /api/files/:project/versions?path=<relativePath> — get version history
     const fileVersionsMatch = pathname.match(/^\/api\/files\/([^/]+)\/versions$/);
     if (fileVersionsMatch && method === "GET") {
-      const projectName = decodeURIComponent(fileVersionsMatch[1]);
-      const project = db.getProjectByName(projectName);
-      const dirName = project?.dirName ?? projectName;
+      const projectId = decodeURIComponent(fileVersionsMatch[1]);
+      const project = db.resolveProject(projectId);
+      const dirName = project?.dirName ?? projectId;
       const relativePath = url.searchParams.get("path");
       if (!relativePath) {
         sendError(res, "Missing path query parameter");
@@ -392,8 +397,13 @@ const server = createServer(async (req, res) => {
         serveStatic(res, resolve(STATIC_DIR, "index.html"));
         return;
       }
-      const safePath = pathname.replace(/\.\./g, "");
-      serveStatic(res, resolve(STATIC_DIR, safePath.slice(1)));
+      // Resolve-then-verify: ensure the resolved path stays within STATIC_DIR
+      const requested = resolve(STATIC_DIR, pathname.slice(1));
+      if (!isPathWithinDir(STATIC_DIR, requested)) {
+        sendError(res, "Forbidden", 403);
+        return;
+      }
+      serveStatic(res, requested);
       return;
     }
 
@@ -404,6 +414,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Monitor web server listening on http://localhost:${PORT}`);
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`Monitor web server listening on http://127.0.0.1:${PORT}`);
 });
