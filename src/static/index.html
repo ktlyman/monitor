@@ -192,12 +192,23 @@
       display: flex; align-items: center; margin-bottom: 0.35rem;
       font-size: 0.85rem;
     }
-    .bar-label { width: 140px; text-align: right; padding-right: 0.75rem; color: var(--muted); font-family: monospace; font-size: 0.8rem; }
+    .bar-label {
+      width: 180px; min-width: 180px; text-align: right; padding-right: 0.75rem;
+      color: var(--muted); font-family: monospace; font-size: 0.8rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .bar-track { flex: 1; min-width: 0; }
     .bar-fill {
       height: 18px; background: var(--accent); border-radius: 2px;
       min-width: 2px; transition: width 0.3s;
     }
-    .bar-count { margin-left: 0.5rem; color: var(--muted); font-size: 0.8rem; }
+    .bar-count { margin-left: 0.5rem; color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+    .bar-chart table th:not(:first-child),
+    .bar-chart table td:not(:first-child) { text-align: right; padding-left: 1rem; }
+    .bar-chart table th:first-child,
+    .bar-chart table td:first-child { text-align: left; }
+    .bar-chart table th, .bar-chart table td { padding: 0.25rem 0.35rem; }
+    .bar-chart table td:first-child { font-family: monospace; font-size: 0.8rem; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .session-browser { margin-top: 1rem; }
     .session-list { list-style: none; }
@@ -616,8 +627,8 @@
           var bars = a.topTools.map(function(t) {
             var pct = Math.max(2, (t.count / maxCount) * 100);
             return '<div class="bar-row">' +
-              '<span class="bar-label">' + esc(t.name) + '</span>' +
-              '<div class="bar-fill" style="width:' + pct + '%"></div>' +
+              '<span class="bar-label" title="' + esc(t.name) + '">' + esc(t.name) + '</span>' +
+              '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
               '<span class="bar-count">' + formatNum(t.count) + '</span>' +
               '</div>';
           }).join('');
@@ -652,7 +663,7 @@
         document.getElementById('toolReliability').innerHTML =
           '<div class="bar-chart"><h3>Tool Reliability</h3>' +
           '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
-          '<tr style="color:var(--muted)"><th style="text-align:left">Tool</th><th>Total</th><th>Errors</th><th>Success</th></tr>' +
+          '<tr style="color:var(--muted)"><th>Tool</th><th>Total</th><th>Errors</th><th>Success</th></tr>' +
           rows + '</table></div>';
       } catch { /* ignore */ }
     }
@@ -668,8 +679,8 @@
           var pct = Math.max(2, (total / maxTokens) * 100);
           var label = m.model.replace('claude-', '');
           return '<div class="bar-row">' +
-            '<span class="bar-label">' + esc(label) + '</span>' +
-            '<div class="bar-fill" style="width:' + pct + '%;background:#818cf8"></div>' +
+            '<span class="bar-label" title="' + esc(label) + '">' + esc(label) + '</span>' +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:#818cf8"></div></div>' +
             '<span class="bar-count">' + formatNum(total) + ' tok (' + m.messageCount + ' msgs)</span>' +
             '</div>';
         }).join('');
@@ -691,7 +702,7 @@
         document.getElementById('expensiveSessions').innerHTML =
           '<div class="bar-chart"><h3>Most Expensive Sessions</h3>' +
           '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
-          '<tr style="color:var(--muted)"><th style="text-align:left">Project</th><th>Cost</th><th>Tools</th><th>Duration</th></tr>' +
+          '<tr style="color:var(--muted)"><th>Project</th><th>Cost</th><th>Tools</th><th>Duration</th></tr>' +
           rows + '</table></div>';
       } catch { /* ignore */ }
     }
@@ -712,7 +723,7 @@
         document.getElementById('projectCoverage').innerHTML =
           '<div class="bar-chart"><h3>Deep Extraction Coverage</h3>' +
           '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
-          '<tr style="color:var(--muted)"><th style="text-align:left">Project</th><th>Extracted</th><th>%</th><th>Cost</th></tr>' +
+          '<tr style="color:var(--muted)"><th>Project</th><th>Extracted</th><th>%</th><th>Cost</th></tr>' +
           rows + '</table></div>';
       } catch { /* ignore */ }
     }
@@ -825,8 +836,8 @@
             html += '<div class="detail-section"><h4>Tool Usage (' + a.totalToolUses + ' total, ' + a.errorCount + ' errors)</h4>';
             html += tools.map(function(t) {
               var pct = Math.max(2, (t[1] / maxT) * 100);
-              return '<div class="bar-row"><span class="bar-label">' + esc(t[0]) + '</span>' +
-                '<div class="bar-fill" style="width:' + pct + '%"></div>' +
+              return '<div class="bar-row"><span class="bar-label" title="' + esc(t[0]) + '">' + esc(t[0]) + '</span>' +
+                '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
                 '<span class="bar-count">' + t[1] + '</span></div>';
             }).join('');
             html += '</div>';
