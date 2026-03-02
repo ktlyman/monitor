@@ -12,6 +12,8 @@ import type {
   SessionAnalytics,
   ApiRequest,
   Plan,
+  Note,
+  Runbook,
 } from "../src/types/index.js";
 
 describe("MonitorDatabase", () => {
@@ -27,7 +29,7 @@ describe("MonitorDatabase", () => {
 
   // ---- Schema ----
 
-  it("initializes with schema v9", () => {
+  it("initializes with schema v10", () => {
     // Verify all core tables exist by performing simple queries
     expect(() => db.getProjects()).not.toThrow();
     expect(() => db.getStats()).not.toThrow();
@@ -1315,5 +1317,255 @@ describe("MonitorDatabase", () => {
     const tsPattern = template.find((t) => t.content.includes("TypeScript"));
     expect(tsPattern).toBeDefined();
     expect(tsPattern!.projectCount).toBe(2);
+  });
+
+  // ---- Notes ----
+
+  it("inserts and retrieves notes for a project", () => {
+    db.upsertProject(testProject);
+    const id = db.insertNote({
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sessionId: null,
+      category: "observation",
+      content: "This project uses SQLite extensively",
+      createdAt: "2026-03-01T10:00:00Z",
+    });
+    expect(id).toBeGreaterThan(0);
+
+    const notes = db.getProjectNotes("-Users-kevin-Projects-testapp");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].content).toBe("This project uses SQLite extensively");
+    expect(notes[0].category).toBe("observation");
+  });
+
+  it("filters notes by session ID", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertNote({
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sessionId: "abc-123",
+      category: "outcome",
+      content: "Completed authentication refactor",
+      createdAt: "2026-03-01T10:00:00Z",
+    });
+    db.insertNote({
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sessionId: null,
+      category: "observation",
+      content: "Project-level note",
+      createdAt: "2026-03-01T11:00:00Z",
+    });
+
+    const sessionNotes = db.getProjectNotes("-Users-kevin-Projects-testapp", "abc-123");
+    expect(sessionNotes).toHaveLength(1);
+    expect(sessionNotes[0].content).toBe("Completed authentication refactor");
+
+    const allNotes = db.getProjectNotes("-Users-kevin-Projects-testapp");
+    expect(allNotes).toHaveLength(2);
+  });
+
+  it("deletes notes by ID", () => {
+    db.upsertProject(testProject);
+    const id = db.insertNote({
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sessionId: null,
+      category: "todo",
+      content: "Fix the bug",
+      createdAt: "2026-03-01T10:00:00Z",
+    });
+
+    expect(db.deleteNote(id)).toBe(true);
+    expect(db.getProjectNotes("-Users-kevin-Projects-testapp")).toHaveLength(0);
+    expect(db.deleteNote(id)).toBe(false); // Already deleted
+  });
+
+  it("retrieves all notes with project context", () => {
+    db.upsertProject(testProject);
+    db.insertNote({
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sessionId: null,
+      category: "decision",
+      content: "Switched to WAL mode",
+      createdAt: "2026-03-01T10:00:00Z",
+    });
+
+    const all = db.getAllNotes(10);
+    expect(all).toHaveLength(1);
+    expect(all[0].projectName).toBe("testapp");
+  });
+
+  // ---- Runbooks ----
+
+  it("creates and retrieves runbooks", () => {
+    const now = new Date().toISOString();
+    const id = db.insertRunbook({
+      title: "Deploy to Production",
+      projectDirName: null,
+      description: "Standard deployment checklist",
+      steps: "1. Run tests\n2. Build\n3. Deploy",
+      source: "manual",
+      tags: "deploy,ci",
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(id).toBeGreaterThan(0);
+
+    const runbooks = db.getRunbooks();
+    expect(runbooks).toHaveLength(1);
+    expect(runbooks[0].title).toBe("Deploy to Production");
+    expect(runbooks[0].tags).toBe("deploy,ci");
+  });
+
+  it("filters runbooks by project", () => {
+    db.upsertProject(testProject);
+    const now = new Date().toISOString();
+
+    db.insertRunbook({
+      title: "Project-specific runbook",
+      projectDirName: "-Users-kevin-Projects-testapp",
+      description: "Only for testapp",
+      steps: "1. Do stuff",
+      source: "manual",
+      tags: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+    db.insertRunbook({
+      title: "Cross-project runbook",
+      projectDirName: null,
+      description: "For all projects",
+      steps: "1. General step",
+      source: "manual",
+      tags: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Project filter should return both project-specific AND cross-project
+    const projectRunbooks = db.getRunbooks("-Users-kevin-Projects-testapp");
+    expect(projectRunbooks).toHaveLength(2);
+
+    // No filter returns all
+    const allRunbooks = db.getRunbooks();
+    expect(allRunbooks).toHaveLength(2);
+  });
+
+  it("updates runbook fields", () => {
+    const now = new Date().toISOString();
+    const id = db.insertRunbook({
+      title: "Original Title",
+      projectDirName: null,
+      description: "Original",
+      steps: "1. Step",
+      source: "manual",
+      tags: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(db.updateRunbook(id, { title: "Updated Title", tags: "new-tag" })).toBe(true);
+    const updated = db.getRunbook(id);
+    expect(updated).not.toBeNull();
+    expect(updated!.title).toBe("Updated Title");
+    expect(updated!.tags).toBe("new-tag");
+    expect(updated!.description).toBe("Original"); // Unchanged
+  });
+
+  it("deletes runbooks by ID", () => {
+    const now = new Date().toISOString();
+    const id = db.insertRunbook({
+      title: "To Delete",
+      projectDirName: null,
+      description: "",
+      steps: "",
+      source: "manual",
+      tags: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(db.deleteRunbook(id)).toBe(true);
+    expect(db.getRunbook(id)).toBeNull();
+    expect(db.deleteRunbook(id)).toBe(false);
+  });
+
+  // ---- Task brief ----
+
+  it("generates task brief for a project", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertLearning({
+      projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sourceType: "claude_md",
+      sourcePath: "CLAUDE.md",
+      content: "Use TypeScript strict mode",
+      category: "convention",
+      extractedAt: new Date().toISOString(),
+    });
+    db.insertNote({
+      projectDirName: "-Users-kevin-Projects-testapp",
+      sessionId: null,
+      category: "observation",
+      content: "Watch for memory leaks",
+      createdAt: new Date().toISOString(),
+    });
+
+    const brief = db.getTaskBrief("-Users-kevin-Projects-testapp");
+    expect(brief.learnings).toHaveLength(1);
+    expect(brief.notes).toHaveLength(1);
+    expect(brief.notes[0].content).toBe("Watch for memory leaks");
+  });
+
+  // ---- Permission profile ----
+
+  it("generates permission profile for a project", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    db.insertToolInvocations([
+      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "pp1", toolName: "Read", inputSummary: '{"path":"foo.ts"}', isError: false, timestamp: "T1", durationMs: 50, resultSummary: null, inputSizeBytes: 20, resultSizeBytes: 100 },
+      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "pp2", toolName: "Read", inputSummary: '{"path":"bar.ts"}', isError: false, timestamp: "T2", durationMs: 60, resultSummary: null, inputSizeBytes: 20, resultSizeBytes: 200 },
+      { sessionId: "abc-123", messageUuid: "m2", toolUseId: "pp3", toolName: "Bash", inputSummary: '{"cmd":"npm test"}', isError: true, timestamp: "T3", durationMs: 5000, resultSummary: null, inputSizeBytes: 30, resultSizeBytes: 0 },
+    ]);
+
+    const profile = db.getPermissionProfile("-Users-kevin-Projects-testapp");
+    expect(profile).toHaveLength(2);
+    const readProfile = profile.find((p) => p.toolName === "Read");
+    expect(readProfile).toBeDefined();
+    expect(readProfile!.totalUses).toBe(2);
+    expect(readProfile!.errorRate).toBe(0);
+    expect(readProfile!.exampleInputs).toHaveLength(2);
+
+    const bashProfile = profile.find((p) => p.toolName === "Bash");
+    expect(bashProfile).toBeDefined();
+    expect(bashProfile!.errorRate).toBe(1); // 100% error rate
+  });
+
+  // ---- Memory hygiene ----
+
+  it("detects duplicate learnings", () => {
+    db.upsertProject(testProject);
+    const content = "MUST use prepared statements for all user-facing data";
+    db.insertLearning({ projectName: "testapp", projectDirName: "-Users-kevin-Projects-testapp", sourceType: "claude_md", sourcePath: "CLAUDE.md", content, category: "convention", extractedAt: new Date().toISOString() });
+    db.insertLearning({ projectName: "testapp", projectDirName: "-Users-kevin-Projects-testapp", sourceType: "rules", sourcePath: ".claude/rules/db.md", content, category: "convention", extractedAt: new Date().toISOString() });
+
+    const dupes = db.getDuplicateLearnings();
+    expect(dupes).toHaveLength(1);
+    expect(dupes[0].count).toBe(2);
+    expect(dupes[0].projectName).toBe("testapp");
+  });
+
+  it("returns memory health report", () => {
+    db.upsertProject(testProject);
+    db.insertLearning({ projectName: "testapp", projectDirName: "-Users-kevin-Projects-testapp", sourceType: "memory", sourcePath: "memory/MEMORY.md", content: "SQLite everywhere", category: "pattern", extractedAt: new Date().toISOString() });
+
+    const health = db.getMemoryHealth();
+    expect(health.totalLearnings).toBe(1);
+    expect(health.learningsPerProject).toHaveLength(1);
+    expect(health.categoryDistribution).toHaveLength(1);
+    expect(health.categoryDistribution[0].category).toBe("pattern");
   });
 });

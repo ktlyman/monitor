@@ -303,6 +303,9 @@
       <div id="antiPatterns"></div>
       <div id="conventionDrift"></div>
       <div id="plansOverview"></div>
+      <div id="memoryHealth"></div>
+      <div id="notesOverview"></div>
+      <div id="runbooksOverview"></div>
       <div id="expensiveSessions"></div>
       <div id="projectCoverage"></div>
       <div id="thinkingSearch">
@@ -652,6 +655,9 @@
         loadAntiPatterns();
         loadConventionDrift();
         loadPlansOverview();
+        loadMemoryHealth();
+        loadNotesOverview();
+        loadRunbooksOverview();
         loadExpensiveSessions();
         loadProjectCoverage();
         loadRecommendations();
@@ -848,6 +854,73 @@
           '<div class="bar-chart"><h3>Recent Plans</h3>' +
           '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
           '<tr style="color:var(--muted)"><th>Project</th><th>Plan</th><th>Chars</th><th>Date</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadMemoryHealth() {
+      try {
+        var res = await fetch('/api/analytics/memory-health');
+        var data = await res.json();
+        if (!data.health) return;
+        var h = data.health;
+        var sections = '<div class="bar-chart"><h3>Memory Health</h3>';
+        sections += '<div class="stats-grid" style="margin-bottom:0.75rem">';
+        sections += '<div class="stat-card"><div class="stat-value">' + h.totalLearnings + '</div><div class="stat-label">Total Learnings</div></div>';
+        sections += '<div class="stat-card"><div class="stat-value" style="color:' + (h.duplicateCount > 0 ? '#f59e0b' : '#22c55e') + '">' + h.duplicateCount + '</div><div class="stat-label">Duplicate Groups</div></div>';
+        sections += '<div class="stat-card"><div class="stat-value" style="color:' + (h.staleProjectCount > 0 ? '#f59e0b' : '#22c55e') + '">' + h.staleProjectCount + '</div><div class="stat-label">Stale Projects</div></div>';
+        sections += '</div>';
+
+        if (data.duplicates && data.duplicates.length > 0) {
+          sections += '<details><summary style="cursor:pointer;color:var(--muted);font-size:0.8rem">' + data.duplicates.length + ' duplicate groups</summary>';
+          sections += '<ul style="font-size:0.8rem;margin-top:0.25rem">';
+          data.duplicates.slice(0, 5).forEach(function(d) {
+            sections += '<li>' + esc(d.projectName) + ': "' + esc(d.fingerprint.slice(0, 60)) + '..." (' + d.count + 'x)</li>';
+          });
+          sections += '</ul></details>';
+        }
+
+        sections += '</div>';
+        document.getElementById('memoryHealth').innerHTML = sections;
+      } catch { /* ignore */ }
+    }
+
+    async function loadNotesOverview() {
+      try {
+        var res = await fetch('/api/notes?limit=10');
+        var data = await res.json();
+        if (!data.notes || data.notes.length === 0) return;
+        var rows = data.notes.map(function(n) {
+          var badge = n.category === 'todo' ? '#3b82f6' : n.category === 'outcome' ? '#22c55e' : n.category === 'decision' ? '#a855f7' : 'var(--muted)';
+          return '<tr><td>' + esc(n.projectName) + '</td>' +
+            '<td><span style="color:' + badge + '">' + esc(n.category) + '</span></td>' +
+            '<td>' + esc(n.content.slice(0, 120)) + '</td>' +
+            '<td>' + esc(n.createdAt.slice(0, 10)) + '</td></tr>';
+        }).join('');
+        document.getElementById('notesOverview').innerHTML =
+          '<div class="bar-chart"><h3>Recent Notes</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>Project</th><th>Type</th><th>Content</th><th>Date</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadRunbooksOverview() {
+      try {
+        var res = await fetch('/api/runbooks');
+        var data = await res.json();
+        if (!data.runbooks || data.runbooks.length === 0) return;
+        var rows = data.runbooks.map(function(r) {
+          var scope = r.projectDirName ? esc(r.projectDirName) : 'cross-project';
+          return '<tr><td>' + esc(r.title) + '</td>' +
+            '<td>' + scope + '</td>' +
+            '<td>' + esc(r.description.slice(0, 120)) + '</td>' +
+            '<td>' + esc(r.tags || '-') + '</td></tr>';
+        }).join('');
+        document.getElementById('runbooksOverview').innerHTML =
+          '<div class="bar-chart"><h3>Runbooks</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>Title</th><th>Scope</th><th>Description</th><th>Tags</th></tr>' +
           rows + '</table></div>';
       } catch { /* ignore */ }
     }

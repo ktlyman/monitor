@@ -311,6 +311,42 @@ export interface ApiRequest {
   thinkingCharCount: number;
 }
 
+// ---- Write-back types ----
+
+/** An agent-authored note attached to a project or session. */
+export interface Note {
+  id?: number;
+  /** Project directory name (required) */
+  projectDirName: string;
+  /** Session ID (optional — null for project-level notes) */
+  sessionId: string | null;
+  /** Note category: observation, decision, outcome, todo */
+  category: "observation" | "decision" | "outcome" | "todo";
+  /** The note content */
+  content: string;
+  /** When this note was created */
+  createdAt: string;
+}
+
+/** A promoted runbook — a reusable sequence of steps for a common task. */
+export interface Runbook {
+  id?: number;
+  /** Human-readable title */
+  title: string;
+  /** Which project this applies to (null = cross-project) */
+  projectDirName: string | null;
+  /** Description of when/why to use this runbook */
+  description: string;
+  /** Markdown steps */
+  steps: string;
+  /** Source: "manual" (agent-created) or "promoted" (from observed patterns) */
+  source: "manual" | "promoted";
+  /** Tags for categorization (comma-separated) */
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ---- Scan types ----
 
 /** Result of a scan operation. */

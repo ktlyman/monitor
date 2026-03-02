@@ -464,6 +464,144 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // GET /api/task-brief/:project — contextual brief for starting work
+    const taskBriefMatch = pathname.match(/^\/api\/task-brief\/([^/]+)$/);
+    if (taskBriefMatch && method === "GET") {
+      const projectId = decodeURIComponent(taskBriefMatch[1]);
+      const project = db.resolveProject(projectId);
+      if (!project) {
+        sendError(res, "Project not found", 404);
+        return;
+      }
+      const brief = db.getTaskBrief(project.dirName);
+      sendJson(res, { project: { name: project.name, dirName: project.dirName }, brief });
+      return;
+    }
+
+    // POST /api/notes — create a note
+    if (pathname === "/api/notes" && method === "POST") {
+      const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      const projectId = body.project as string | undefined;
+      if (!projectId || !body.content) {
+        sendError(res, "Missing project or content");
+        return;
+      }
+      const project = db.resolveProject(projectId);
+      if (!project) {
+        sendError(res, "Project not found", 404);
+        return;
+      }
+      const id = db.insertNote({
+        projectDirName: project.dirName,
+        sessionId: (body.session_id as string) ?? null,
+        category: (body.category as "observation" | "decision" | "outcome" | "todo") ?? "observation",
+        content: body.content as string,
+        createdAt: new Date().toISOString(),
+      });
+      sendJson(res, { id }, 201);
+      return;
+    }
+
+    // GET /api/notes?project=X — get notes for a project or all notes
+    if (pathname === "/api/notes" && method === "GET") {
+      const projectId = url.searchParams.get("project");
+      if (projectId) {
+        const project = db.resolveProject(projectId);
+        if (!project) {
+          sendError(res, "Project not found", 404);
+          return;
+        }
+        const sessionId = url.searchParams.get("session") ?? undefined;
+        const notes = db.getProjectNotes(project.dirName, sessionId);
+        sendJson(res, { notes });
+      } else {
+        const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+        const notes = db.getAllNotes(limit);
+        sendJson(res, { notes });
+      }
+      return;
+    }
+
+    // POST /api/runbooks — create a runbook
+    if (pathname === "/api/runbooks" && method === "POST") {
+      const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      if (!body.title || !body.steps) {
+        sendError(res, "Missing title or steps");
+        return;
+      }
+      let projectDirName: string | null = null;
+      if (body.project) {
+        const project = db.resolveProject(body.project as string);
+        if (!project) {
+          sendError(res, "Project not found", 404);
+          return;
+        }
+        projectDirName = project.dirName;
+      }
+      const now = new Date().toISOString();
+      const id = db.insertRunbook({
+        title: body.title as string,
+        projectDirName,
+        description: (body.description as string) ?? "",
+        steps: body.steps as string,
+        source: "manual",
+        tags: (body.tags as string) ?? "",
+        createdAt: now,
+        updatedAt: now,
+      });
+      sendJson(res, { id }, 201);
+      return;
+    }
+
+    // GET /api/runbooks?project=X — list runbooks
+    if (pathname === "/api/runbooks" && method === "GET") {
+      const projectId = url.searchParams.get("project");
+      let projectDirName: string | undefined;
+      if (projectId) {
+        const project = db.resolveProject(projectId);
+        projectDirName = project?.dirName;
+      }
+      const runbooks = db.getRunbooks(projectDirName);
+      sendJson(res, { runbooks });
+      return;
+    }
+
+    // GET /api/runbooks/:id — get a single runbook
+    const runbookMatch = pathname.match(/^\/api\/runbooks\/(\d+)$/);
+    if (runbookMatch && method === "GET") {
+      const id = parseInt(runbookMatch[1], 10);
+      const runbook = db.getRunbook(id);
+      if (!runbook) {
+        sendError(res, "Runbook not found", 404);
+        return;
+      }
+      sendJson(res, { runbook });
+      return;
+    }
+
+    // GET /api/analytics/permission-profile/:project — permission profile
+    const permProfileMatch = pathname.match(/^\/api\/analytics\/permission-profile\/([^/]+)$/);
+    if (permProfileMatch && method === "GET") {
+      const projectId = decodeURIComponent(permProfileMatch[1]);
+      const project = db.resolveProject(projectId);
+      if (!project) {
+        sendError(res, "Project not found", 404);
+        return;
+      }
+      const profile = db.getPermissionProfile(project.dirName);
+      sendJson(res, { project: { name: project.name, dirName: project.dirName }, profile });
+      return;
+    }
+
+    // GET /api/analytics/memory-health — memory health check
+    if (pathname === "/api/analytics/memory-health" && method === "GET") {
+      const health = db.getMemoryHealth();
+      const duplicates = db.getDuplicateLearnings();
+      const stale = db.getStaleLearnings();
+      sendJson(res, { health, duplicates, stale });
+      return;
+    }
+
     // GET /api/analytics/recommendations — optimization suggestions
     if (pathname === "/api/analytics/recommendations" && method === "GET") {
       const recommendations = generateRecommendations(db);

@@ -3,8 +3,8 @@
 /**
  * MCP server for the Monitor meta-learning system.
  *
- * Exposes 22 tools for querying patterns and learnings across all
- * Claude Code projects. Runs over stdio using JSON-RPC 2.0.
+ * Exposes 30 tools, MCP resources, and prompts for querying patterns
+ * and learnings across all Claude Code projects. Runs over stdio using JSON-RPC 2.0.
  *
  * Search tools:
  *   search_learnings, search_thinking, search_messages
@@ -19,9 +19,16 @@
  *   get_session_analytics, get_session_messages, get_session_requests
  * Plan tools:
  *   get_plans
+ * Active intelligence tools:
+ *   start_task, add_note, get_notes, create_runbook, list_runbooks,
+ *   get_runbook, get_permission_profile, get_memory_health
+ * Resources:
+ *   monitor://projects/{project}/claude-md, monitor://projects/{project}/memory
+ * Prompts:
+ *   project-brief, session-review
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { MonitorDatabase } from "../storage/database.js";
@@ -729,6 +736,475 @@ server.tool(
       return textResult(`${results.length} results:\n\n${text}`);
     } catch (err) {
       return errorResult("Message search failed", err);
+    }
+  }
+);
+
+// ---- MCP Resources ----
+
+// Dynamic resource: project CLAUDE.md
+server.resource(
+  "project-claude-md",
+  new ResourceTemplate("monitor://projects/{project}/claude-md", { list: undefined }),
+  { description: "CLAUDE.md file content for a project", mimeType: "text/markdown" },
+  async (uri, variables) => {
+    const project = db.resolveProject(variables.project as string);
+    if (!project) return { contents: [{ uri: uri.href, text: "Project not found." }] };
+    const file = db.getProjectFile(project.dirName, "CLAUDE.md");
+    if (!file) return { contents: [{ uri: uri.href, text: "No CLAUDE.md found." }] };
+    return { contents: [{ uri: uri.href, text: file.content, mimeType: "text/markdown" }] };
+  }
+);
+
+// Dynamic resource: project MEMORY.md
+server.resource(
+  "project-memory",
+  new ResourceTemplate("monitor://projects/{project}/memory", { list: undefined }),
+  { description: "MEMORY.md file content for a project", mimeType: "text/markdown" },
+  async (uri, variables) => {
+    const project = db.resolveProject(variables.project as string);
+    if (!project) return { contents: [{ uri: uri.href, text: "Project not found." }] };
+    const files = db.getProjectFiles(project.dirName);
+    const memFile = files.find((f) => f.fileType === "memory");
+    if (!memFile) return { contents: [{ uri: uri.href, text: "No MEMORY.md found." }] };
+    return { contents: [{ uri: uri.href, text: memFile.content, mimeType: "text/markdown" }] };
+  }
+);
+
+// ---- MCP Prompts ----
+
+server.prompt(
+  "project-brief",
+  "Generate a contextual briefing for a project — learnings, gotchas, patterns, and recent issues.",
+  { project: z.string().describe("Project directory name or display name") },
+  async (args) => {
+    const project = db.resolveProject(args.project);
+    if (!project) return { messages: [{ role: "user", content: { type: "text", text: `Project "${args.project}" not found.` } }] };
+    const brief = db.getTaskBrief(project.dirName);
+
+    const sections: string[] = [`# Project Brief: ${project.name}`];
+
+    if (brief.learnings.length > 0) {
+      sections.push("\n## Learnings");
+      for (const l of brief.learnings.slice(0, 20)) {
+        sections.push(`- [${l.sourceType}/${l.category}] ${l.content.slice(0, 200)}`);
+      }
+    }
+
+    if (brief.recentAntiPatterns.length > 0) {
+      sections.push("\n## Recent Issues");
+      for (const a of brief.recentAntiPatterns) {
+        sections.push(`- Session ${a.sessionId.slice(0, 8)}... — ${a.errorCount} errors, $${a.estimatedCostUsd.toFixed(2)} (${a.startedAt})`);
+      }
+    }
+
+    if (brief.topToolSequences.length > 0) {
+      sections.push("\n## Common Tool Patterns");
+      for (const s of brief.topToolSequences) {
+        sections.push(`- ${s.toolA} → ${s.toolB}: ${s.frequency}x`);
+      }
+    }
+
+    if (brief.notes.length > 0) {
+      sections.push("\n## Active Notes");
+      for (const n of brief.notes.slice(0, 10)) {
+        sections.push(`- [${n.category}] ${n.content.slice(0, 200)}`);
+      }
+    }
+
+    if (brief.runbooks.length > 0) {
+      sections.push("\n## Available Runbooks");
+      for (const r of brief.runbooks) {
+        sections.push(`- **${r.title}**: ${r.description.slice(0, 150)}`);
+      }
+    }
+
+    return { messages: [{ role: "user", content: { type: "text", text: sections.join("\n") } }] };
+  }
+);
+
+server.prompt(
+  "session-review",
+  "Review a session's analytics, cost, and tool usage for retrospective analysis.",
+  { session_id: z.string().describe("Session UUID to review") },
+  async (args) => {
+    const analytics = db.getSessionAnalytics(args.session_id);
+    if (!analytics) return { messages: [{ role: "user", content: { type: "text", text: `No analytics found for session "${args.session_id}".` } }] };
+
+    const requests = db.getSessionApiRequests(args.session_id);
+    const plans = db.getSessionPlans(args.session_id);
+
+    const sections: string[] = [
+      `# Session Review: ${args.session_id}`,
+      `\nCost: $${analytics.estimatedCostUsd.toFixed(4)} | Duration: ${Math.round(analytics.durationSeconds / 60)}min | Models: ${analytics.models}`,
+      `API requests: ${analytics.apiRequestCount} | Tool uses: ${analytics.totalToolUses} (${analytics.errorCount} errors)`,
+      `Thinking: ${analytics.thinkingBlockCount} blocks, ${analytics.thinkingCharCount.toLocaleString()} chars`,
+    ];
+
+    if (Object.keys(analytics.toolBreakdown).length > 0) {
+      sections.push("\n## Tool Breakdown");
+      for (const [name, count] of Object.entries(analytics.toolBreakdown).sort((a, b) => (b[1] as number) - (a[1] as number))) {
+        sections.push(`- ${name}: ${count}`);
+      }
+    }
+
+    if (requests.length > 0) {
+      sections.push("\n## Top 5 Expensive Requests");
+      const sorted = [...requests].sort((a, b) => b.estimatedCostUsd - a.estimatedCostUsd).slice(0, 5);
+      for (const r of sorted) {
+        sections.push(`- #${r.requestIndex} ${r.model} $${r.estimatedCostUsd.toFixed(4)} (${r.inputTokens.toLocaleString()}in/${r.outputTokens.toLocaleString()}out) [${r.stopReason ?? "?"}]`);
+      }
+    }
+
+    if (plans.length > 0) {
+      sections.push("\n## Plans Used");
+      for (const p of plans) {
+        sections.push(`- Plan (${p.contentLength} chars): ${p.planContent.slice(0, 300)}...`);
+      }
+    }
+
+    sections.push("\n\nProvide a retrospective analysis: What went well? What could be improved? Any anti-patterns observed?");
+
+    return { messages: [{ role: "user", content: { type: "text", text: sections.join("\n") } }] };
+  }
+);
+
+// ---- start_task ----
+server.tool(
+  "start_task",
+  "Get a contextual brief before starting work on a project. " +
+    "Returns learnings, recent issues, common tool patterns, active notes, and relevant runbooks. " +
+    "Call this at the beginning of a session to understand the project context.",
+  {
+    project: z.string().describe("Project directory name or display name"),
+  },
+  async (params) => {
+    try {
+      const project = db.resolveProject(params.project);
+      if (!project) return notFound("project", params.project);
+
+      const brief = db.getTaskBrief(project.dirName);
+      const sections: string[] = [`# Task Brief: ${project.name} (${project.dirName})`];
+
+      // Learnings grouped by category
+      if (brief.learnings.length > 0) {
+        const byCategory = new Map<string, string[]>();
+        for (const l of brief.learnings) {
+          const list = byCategory.get(l.category) ?? [];
+          list.push(l.content.slice(0, 300));
+          byCategory.set(l.category, list);
+        }
+        sections.push("\n## Project Knowledge");
+        for (const [cat, items] of byCategory) {
+          sections.push(`\n### ${cat}`);
+          for (const item of items.slice(0, 5)) {
+            sections.push(`- ${item}`);
+          }
+          if (items.length > 5) sections.push(`  (+ ${items.length - 5} more)`);
+        }
+      }
+
+      if (brief.recentAntiPatterns.length > 0) {
+        sections.push("\n## Recent Issues (avoid these)");
+        for (const a of brief.recentAntiPatterns) {
+          sections.push(`- ${a.errorCount} errors, $${a.estimatedCostUsd.toFixed(2)} (${a.startedAt})`);
+        }
+      }
+
+      if (brief.topToolSequences.length > 0) {
+        sections.push("\n## Common Workflows");
+        for (const s of brief.topToolSequences) {
+          sections.push(`- ${s.toolA} → ${s.toolB}: ${s.frequency}x`);
+        }
+      }
+
+      if (brief.notes.length > 0) {
+        sections.push("\n## Notes");
+        for (const n of brief.notes.slice(0, 10)) {
+          sections.push(`- [${n.category}] ${n.content.slice(0, 300)}`);
+        }
+      }
+
+      if (brief.runbooks.length > 0) {
+        sections.push("\n## Runbooks");
+        for (const r of brief.runbooks) {
+          sections.push(`- **${r.title}** — ${r.description}`);
+        }
+      }
+
+      return textResult(sections.join("\n"));
+    } catch (err) {
+      return errorResult("Failed to generate task brief", err);
+    }
+  }
+);
+
+// ---- add_note ----
+server.tool(
+  "add_note",
+  "Record an observation, decision, outcome, or todo for a project or session. " +
+    "Use this to capture knowledge as you work — it persists across sessions. " +
+    "Notes appear in start_task briefs and project summaries.",
+  {
+    project: z.string().describe("Project directory name or display name"),
+    content: z.string().describe("Note content"),
+    category: z.enum(["observation", "decision", "outcome", "todo"]).optional().describe("Note category (default: observation)"),
+    session_id: z.string().optional().describe("Attach to a specific session (optional)"),
+  },
+  async (params) => {
+    try {
+      const project = db.resolveProject(params.project);
+      if (!project) return notFound("project", params.project);
+
+      const id = db.insertNote({
+        projectDirName: project.dirName,
+        sessionId: params.session_id ?? null,
+        category: params.category ?? "observation",
+        content: params.content,
+        createdAt: new Date().toISOString(),
+      });
+
+      return textResult(`Note #${id} saved to ${project.name} [${params.category ?? "observation"}].`);
+    } catch (err) {
+      return errorResult("Failed to add note", err);
+    }
+  }
+);
+
+// ---- get_notes ----
+server.tool(
+  "get_notes",
+  "Retrieve notes for a project or across all projects. " +
+    "Notes are agent-authored observations, decisions, outcomes, and todos.",
+  {
+    project: z.string().optional().describe("Project directory name or display name (omit for all)"),
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async (params) => {
+    try {
+      if (params.project) {
+        const project = db.resolveProject(params.project);
+        if (!project) return notFound("project", params.project);
+        const notes = db.getProjectNotes(project.dirName);
+        if (notes.length === 0) return emptyResult("notes");
+        const text = notes.slice(0, params.limit ?? 20)
+          .map((n) => `#${n.id} [${n.category}] ${n.createdAt}\n  ${n.content.slice(0, 500)}`)
+          .join("\n\n");
+        return textResult(`${notes.length} notes:\n\n${text}`);
+      }
+      const notes = db.getAllNotes(params.limit ?? 20);
+      if (notes.length === 0) return emptyResult("notes");
+      const text = notes
+        .map((n) => `#${n.id} [${n.projectName}] [${n.category}] ${n.createdAt}\n  ${n.content.slice(0, 500)}`)
+        .join("\n\n");
+      return textResult(`${notes.length} notes:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get notes", err);
+    }
+  }
+);
+
+// ---- create_runbook ----
+server.tool(
+  "create_runbook",
+  "Create a reusable runbook — a documented sequence of steps for a common task. " +
+    "Runbooks appear in start_task briefs and can be shared across projects.",
+  {
+    title: z.string().describe("Runbook title"),
+    description: z.string().describe("When/why to use this runbook"),
+    steps: z.string().describe("Markdown-formatted steps"),
+    project: z.string().optional().describe("Project (omit for cross-project runbook)"),
+    tags: z.string().optional().describe("Comma-separated tags"),
+  },
+  async (params) => {
+    try {
+      let projectDirName: string | null = null;
+      if (params.project) {
+        const project = db.resolveProject(params.project);
+        if (!project) return notFound("project", params.project);
+        projectDirName = project.dirName;
+      }
+
+      const now = new Date().toISOString();
+      const id = db.insertRunbook({
+        title: params.title,
+        projectDirName,
+        description: params.description,
+        steps: params.steps,
+        source: "manual",
+        tags: params.tags ?? "",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return textResult(`Runbook #${id} "${params.title}" created.`);
+    } catch (err) {
+      return errorResult("Failed to create runbook", err);
+    }
+  }
+);
+
+// ---- list_runbooks ----
+server.tool(
+  "list_runbooks",
+  "List all runbooks, optionally filtered by project. " +
+    "Runbooks are reusable step sequences for common tasks.",
+  {
+    project: z.string().optional().describe("Filter by project (omit for all)"),
+  },
+  async (params) => {
+    try {
+      let projectDirName: string | undefined;
+      if (params.project) {
+        const project = db.resolveProject(params.project);
+        if (!project) return notFound("project", params.project);
+        projectDirName = project.dirName;
+      }
+      const runbooks = db.getRunbooks(projectDirName);
+      if (runbooks.length === 0) return emptyResult("runbooks");
+      const text = runbooks
+        .map((r) => {
+          const scope = r.projectDirName ? `[${r.projectDirName}]` : "[cross-project]";
+          return `#${r.id} ${scope} **${r.title}**\n  ${r.description.slice(0, 200)}${r.tags ? `\n  Tags: ${r.tags}` : ""}`;
+        })
+        .join("\n\n");
+      return textResult(`${runbooks.length} runbooks:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to list runbooks", err);
+    }
+  }
+);
+
+// ---- get_runbook ----
+server.tool(
+  "get_runbook",
+  "Get full details of a runbook including all steps. " +
+    "Use list_runbooks to find runbook IDs.",
+  {
+    id: z.number().describe("Runbook ID"),
+  },
+  async (params) => {
+    try {
+      const runbook = db.getRunbook(params.id);
+      if (!runbook) return notFound("runbook", String(params.id));
+      const scope = runbook.projectDirName ?? "cross-project";
+      return textResult(
+        `# ${runbook.title}\n\nScope: ${scope} | Source: ${runbook.source} | Tags: ${runbook.tags || "(none)"}\n` +
+        `Created: ${runbook.createdAt} | Updated: ${runbook.updatedAt}\n\n` +
+        `## Description\n${runbook.description}\n\n` +
+        `## Steps\n${runbook.steps}`
+      );
+    } catch (err) {
+      return errorResult("Failed to get runbook", err);
+    }
+  }
+);
+
+// ---- get_permission_profile ----
+server.tool(
+  "get_permission_profile",
+  "Analyze tool usage for a project to generate a permission profile. " +
+    "Shows which tools are used, error rates, durations, and example inputs. " +
+    "Useful for configuring Claude Code permissions based on observed patterns.",
+  {
+    project: z.string().describe("Project directory name or display name"),
+  },
+  async (params) => {
+    try {
+      const project = db.resolveProject(params.project);
+      if (!project) return notFound("project", params.project);
+
+      const profile = db.getPermissionProfile(project.dirName);
+      if (profile.length === 0) return emptyResult("tool usage data", DEEP_HINT);
+
+      const sections = [`# Permission Profile: ${project.name}\n`];
+
+      // Group by risk level
+      const safe = profile.filter((t) => t.errorRate < 0.05);
+      const moderate = profile.filter((t) => t.errorRate >= 0.05 && t.errorRate < 0.2);
+      const risky = profile.filter((t) => t.errorRate >= 0.2);
+
+      if (safe.length > 0) {
+        sections.push("## Safe to Auto-Allow (< 5% error rate)");
+        for (const t of safe) {
+          const dur = t.avgDurationMs !== null ? ` ~${Math.round(t.avgDurationMs)}ms` : "";
+          sections.push(`- ${t.toolName}: ${t.totalUses} uses${dur}`);
+        }
+      }
+
+      if (moderate.length > 0) {
+        sections.push("\n## Review Recommended (5-20% error rate)");
+        for (const t of moderate) {
+          sections.push(`- ${t.toolName}: ${t.totalUses} uses, ${(t.errorRate * 100).toFixed(1)}% errors`);
+        }
+      }
+
+      if (risky.length > 0) {
+        sections.push("\n## Caution Required (> 20% error rate)");
+        for (const t of risky) {
+          sections.push(`- ${t.toolName}: ${t.totalUses} uses, ${(t.errorRate * 100).toFixed(1)}% errors`);
+          for (const ex of t.exampleInputs) {
+            sections.push(`    Example: ${ex.slice(0, 150)}`);
+          }
+        }
+      }
+
+      return textResult(sections.join("\n"));
+    } catch (err) {
+      return errorResult("Failed to get permission profile", err);
+    }
+  }
+);
+
+// ---- get_memory_health ----
+server.tool(
+  "get_memory_health",
+  "Health check on stored learnings: duplicates, stale data, and distribution. " +
+    "Useful for identifying memory that needs cleanup or refresh.",
+  {},
+  async () => {
+    try {
+      const health = db.getMemoryHealth();
+      const duplicates = db.getDuplicateLearnings();
+      const stale = db.getStaleLearnings();
+
+      const sections = ["# Memory Health Report\n"];
+
+      sections.push(`Total learnings: ${health.totalLearnings}`);
+      sections.push(`Duplicate groups: ${health.duplicateCount}`);
+      sections.push(`Stale projects (>7 days): ${health.staleProjectCount}`);
+
+      if (health.categoryDistribution.length > 0) {
+        sections.push("\n## Category Distribution");
+        for (const c of health.categoryDistribution) {
+          sections.push(`- ${c.category}: ${c.count}`);
+        }
+      }
+
+      if (health.learningsPerProject.length > 0) {
+        sections.push("\n## Learnings per Project");
+        for (const p of health.learningsPerProject) {
+          sections.push(`- ${p.projectName}: ${p.count}`);
+        }
+      }
+
+      if (duplicates.length > 0) {
+        sections.push("\n## Duplicate Learnings");
+        for (const d of duplicates.slice(0, 10)) {
+          sections.push(`- ${d.projectName}: "${d.fingerprint}..." (${d.count}x, IDs: ${d.ids})`);
+        }
+      }
+
+      if (stale.length > 0) {
+        sections.push("\n## Stale Projects");
+        for (const s of stale) {
+          sections.push(`- ${s.projectName}: ${s.learningCount} learnings, last scanned ${s.daysSinceScanned} days ago`);
+        }
+      }
+
+      return textResult(sections.join("\n"));
+    } catch (err) {
+      return errorResult("Failed to get memory health", err);
     }
   }
 );

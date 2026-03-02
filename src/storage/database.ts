@@ -16,12 +16,14 @@ import type {
   SessionAnalytics,
   ApiRequest,
   Plan,
+  Note,
+  Runbook,
   SearchOptions,
   SearchResult,
   SystemStats,
 } from "../types/index.js";
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -276,6 +278,7 @@ export class MonitorDatabase {
       if (currentVersion < 7) this._migrateV7();
       if (currentVersion < 8) this._migrateV8();
       if (currentVersion < 9) this._migrateV9();
+      if (currentVersion < 10) this._migrateV10();
       this.db
         .prepare(
           "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -1817,6 +1820,378 @@ export class MonitorDatabase {
         avgInputBytes: number;
         avgResultBytes: number;
       }>;
+  }
+
+  // ---- V10 migration ----
+
+  private _migrateV10(): void {
+    // Agent-authored notes attached to projects/sessions
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS notes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_dir_name TEXT NOT NULL,
+        session_id      TEXT,
+        category        TEXT NOT NULL DEFAULT 'observation',
+        content         TEXT NOT NULL,
+        created_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(project_dir_name);
+      CREATE INDEX IF NOT EXISTS idx_notes_session ON notes(session_id);
+    `);
+
+    // Promoted runbooks — reusable step sequences
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS runbooks (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        title           TEXT NOT NULL,
+        project_dir_name TEXT,
+        description     TEXT NOT NULL DEFAULT '',
+        steps           TEXT NOT NULL DEFAULT '',
+        source          TEXT NOT NULL DEFAULT 'manual',
+        tags            TEXT NOT NULL DEFAULT '',
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_dir_name);
+    `);
+  }
+
+  // ---- Note methods ----
+
+  /** Insert a note. Returns the new note ID. */
+  insertNote(note: Note): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO notes (project_dir_name, session_id, category, content, created_at)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(note.projectDirName, note.sessionId, note.category, note.content, note.createdAt);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Get notes for a project, optionally filtered by session. */
+  getProjectNotes(projectDirName: string, sessionId?: string): Note[] {
+    if (sessionId) {
+      return this.db
+        .prepare(
+          `SELECT id, project_dir_name AS projectDirName, session_id AS sessionId,
+                  category, content, created_at AS createdAt
+           FROM notes WHERE project_dir_name = ? AND session_id = ?
+           ORDER BY created_at DESC`
+        )
+        .all(projectDirName, sessionId) as Note[];
+    }
+    return this.db
+      .prepare(
+        `SELECT id, project_dir_name AS projectDirName, session_id AS sessionId,
+                category, content, created_at AS createdAt
+         FROM notes WHERE project_dir_name = ?
+         ORDER BY created_at DESC`
+      )
+      .all(projectDirName) as Note[];
+  }
+
+  /** Get all notes across projects. */
+  getAllNotes(limit = 50): Array<Note & { projectName: string }> {
+    return this.db
+      .prepare(
+        `SELECT n.id, n.project_dir_name AS projectDirName, n.session_id AS sessionId,
+                n.category, n.content, n.created_at AS createdAt,
+                p.name AS projectName
+         FROM notes n
+         JOIN projects p ON p.dir_name = n.project_dir_name
+         ORDER BY n.created_at DESC
+         LIMIT ?`
+      )
+      .all(limit) as Array<Note & { projectName: string }>;
+  }
+
+  /** Delete a note by ID. */
+  deleteNote(id: number): boolean {
+    const result = this.db
+      .prepare("DELETE FROM notes WHERE id = ?")
+      .run(id);
+    return result.changes > 0;
+  }
+
+  // ---- Runbook methods ----
+
+  /** Insert a runbook. Returns the new runbook ID. */
+  insertRunbook(runbook: Runbook): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO runbooks (title, project_dir_name, description, steps, source, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        runbook.title, runbook.projectDirName, runbook.description,
+        runbook.steps, runbook.source, runbook.tags,
+        runbook.createdAt, runbook.updatedAt
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Update a runbook's content. */
+  updateRunbook(id: number, updates: { title?: string; description?: string; steps?: string; tags?: string }): boolean {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (updates.title !== undefined) { sets.push("title = ?"); params.push(updates.title); }
+    if (updates.description !== undefined) { sets.push("description = ?"); params.push(updates.description); }
+    if (updates.steps !== undefined) { sets.push("steps = ?"); params.push(updates.steps); }
+    if (updates.tags !== undefined) { sets.push("tags = ?"); params.push(updates.tags); }
+    if (sets.length === 0) return false;
+    sets.push("updated_at = ?");
+    params.push(new Date().toISOString());
+    params.push(id);
+    const result = this.db
+      .prepare(`UPDATE runbooks SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...params);
+    return result.changes > 0;
+  }
+
+  /** Get all runbooks, optionally filtered by project. */
+  getRunbooks(projectDirName?: string): Runbook[] {
+    if (projectDirName) {
+      return this.db
+        .prepare(
+          `SELECT id, title, project_dir_name AS projectDirName, description, steps,
+                  source, tags, created_at AS createdAt, updated_at AS updatedAt
+           FROM runbooks WHERE project_dir_name = ? OR project_dir_name IS NULL
+           ORDER BY updated_at DESC`
+        )
+        .all(projectDirName) as Runbook[];
+    }
+    return this.db
+      .prepare(
+        `SELECT id, title, project_dir_name AS projectDirName, description, steps,
+                source, tags, created_at AS createdAt, updated_at AS updatedAt
+         FROM runbooks ORDER BY updated_at DESC`
+      )
+      .all() as Runbook[];
+  }
+
+  /** Get a single runbook by ID. */
+  getRunbook(id: number): Runbook | null {
+    return (this.db
+      .prepare(
+        `SELECT id, title, project_dir_name AS projectDirName, description, steps,
+                source, tags, created_at AS createdAt, updated_at AS updatedAt
+         FROM runbooks WHERE id = ?`
+      )
+      .get(id) as Runbook | undefined) ?? null;
+  }
+
+  /** Delete a runbook by ID. */
+  deleteRunbook(id: number): boolean {
+    const result = this.db
+      .prepare("DELETE FROM runbooks WHERE id = ?")
+      .run(id);
+    return result.changes > 0;
+  }
+
+  // ---- Start-task brief query ----
+
+  /** Build a contextual brief for starting a task on a project.
+   *  Aggregates learnings, recent anti-patterns, tool patterns, and active notes. */
+  getTaskBrief(projectDirName: string): {
+    learnings: Learning[];
+    recentAntiPatterns: Array<{ sessionId: string; errorCount: number; estimatedCostUsd: number; startedAt: string }>;
+    topToolSequences: Array<{ toolA: string; toolB: string; frequency: number }>;
+    notes: Note[];
+    runbooks: Runbook[];
+  } {
+    const learnings = this.getLearningsForProject(projectDirName);
+
+    const recentAntiPatterns = this.db
+      .prepare(
+        `SELECT sa.session_id AS sessionId, sa.error_count AS errorCount,
+                sa.estimated_cost_usd AS estimatedCostUsd, s.started_at AS startedAt
+         FROM session_analytics sa
+         JOIN sessions s ON s.session_id = sa.session_id
+         WHERE s.project_dir_name = ? AND sa.error_count > 3
+         ORDER BY s.started_at DESC
+         LIMIT 5`
+      )
+      .all(projectDirName) as Array<{ sessionId: string; errorCount: number; estimatedCostUsd: number; startedAt: string }>;
+
+    // Top tool sequences for this project
+    const topToolSequences = this.db
+      .prepare(
+        `SELECT t1.tool_name AS toolA, t2.tool_name AS toolB, COUNT(*) AS frequency
+         FROM tool_invocations t1
+         JOIN tool_invocations t2
+           ON t1.session_id = t2.session_id
+           AND t2.id = (
+             SELECT MIN(t3.id) FROM tool_invocations t3
+             WHERE t3.session_id = t1.session_id AND t3.id > t1.id
+           )
+         JOIN sessions s ON s.session_id = t1.session_id
+         WHERE s.project_dir_name = ?
+         GROUP BY toolA, toolB
+         ORDER BY frequency DESC
+         LIMIT 10`
+      )
+      .all(projectDirName) as Array<{ toolA: string; toolB: string; frequency: number }>;
+
+    const notes = this.getProjectNotes(projectDirName);
+    const runbooks = this.getRunbooks(projectDirName);
+
+    return { learnings, recentAntiPatterns, topToolSequences, notes, runbooks };
+  }
+
+  // ---- Permission profile query ----
+
+  /** Analyze tool usage for a project to generate a permission profile. */
+  getPermissionProfile(projectDirName: string): Array<{
+    toolName: string;
+    totalUses: number;
+    errorRate: number;
+    avgDurationMs: number | null;
+    exampleInputs: string[];
+  }> {
+    const tools = this.db
+      .prepare(
+        `SELECT ti.tool_name AS toolName,
+                COUNT(*) AS totalUses,
+                ROUND(CAST(SUM(ti.is_error) AS REAL) / COUNT(*), 4) AS errorRate,
+                ROUND(AVG(ti.duration_ms)) AS avgDurationMs
+         FROM tool_invocations ti
+         JOIN sessions s ON s.session_id = ti.session_id
+         WHERE s.project_dir_name = ?
+         GROUP BY ti.tool_name
+         ORDER BY totalUses DESC`
+      )
+      .all(projectDirName) as Array<{
+        toolName: string;
+        totalUses: number;
+        errorRate: number;
+        avgDurationMs: number | null;
+      }>;
+
+    // Get example inputs for top tools (3 examples each)
+    return tools.map((t) => {
+      const examples = this.db
+        .prepare(
+          `SELECT input_summary FROM tool_invocations ti
+           JOIN sessions s ON s.session_id = ti.session_id
+           WHERE s.project_dir_name = ? AND ti.tool_name = ? AND ti.input_summary != ''
+           ORDER BY ti.timestamp DESC
+           LIMIT 3`
+        )
+        .all(projectDirName, t.toolName) as Array<{ input_summary: string }>;
+
+      return {
+        ...t,
+        exampleInputs: examples.map((e) => e.input_summary),
+      };
+    });
+  }
+
+  // ---- Memory hygiene queries ----
+
+  /** Find near-duplicate learnings (same first 80 chars within a project). */
+  getDuplicateLearnings(): Array<{
+    projectName: string;
+    fingerprint: string;
+    count: number;
+    ids: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT project_name AS projectName,
+                SUBSTR(content, 1, 80) AS fingerprint,
+                COUNT(*) AS count,
+                GROUP_CONCAT(id) AS ids
+         FROM learnings
+         GROUP BY project_dir_name, SUBSTR(content, 1, 80)
+         HAVING count > 1
+         ORDER BY count DESC
+         LIMIT 50`
+      )
+      .all() as Array<{
+        projectName: string;
+        fingerprint: string;
+        count: number;
+        ids: string;
+      }>;
+  }
+
+  /** Find projects not scanned in over 7 days with stale learnings. */
+  getStaleLearnings(daysThreshold = 7): Array<{
+    projectName: string;
+    dirName: string;
+    lastScanned: string;
+    learningCount: number;
+    daysSinceScanned: number;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT p.name AS projectName, p.dir_name AS dirName,
+                p.last_scanned_at AS lastScanned,
+                COUNT(l.id) AS learningCount,
+                CAST(julianday('now') - julianday(p.last_scanned_at) AS INTEGER) AS daysSinceScanned
+         FROM projects p
+         LEFT JOIN learnings l ON l.project_dir_name = p.dir_name
+         WHERE julianday('now') - julianday(p.last_scanned_at) > ?
+         GROUP BY p.dir_name
+         HAVING learningCount > 0
+         ORDER BY daysSinceScanned DESC`
+      )
+      .all(daysThreshold) as Array<{
+        projectName: string;
+        dirName: string;
+        lastScanned: string;
+        learningCount: number;
+        daysSinceScanned: number;
+      }>;
+  }
+
+  /** Overall memory health check. */
+  getMemoryHealth(): {
+    totalLearnings: number;
+    duplicateCount: number;
+    staleProjectCount: number;
+    learningsPerProject: Array<{ projectName: string; count: number }>;
+    categoryDistribution: Array<{ category: string; count: number }>;
+  } {
+    const totalLearnings = (this.db.prepare("SELECT COUNT(*) as c FROM learnings").get() as { c: number }).c;
+
+    const duplicateCount = (this.db
+      .prepare(
+        `SELECT COUNT(*) as c FROM (
+          SELECT SUBSTR(content, 1, 80), project_dir_name
+          FROM learnings
+          GROUP BY project_dir_name, SUBSTR(content, 1, 80)
+          HAVING COUNT(*) > 1
+        )`
+      )
+      .get() as { c: number }).c;
+
+    const staleProjectCount = (this.db
+      .prepare(
+        `SELECT COUNT(*) as c FROM projects
+         WHERE julianday('now') - julianday(last_scanned_at) > 7`
+      )
+      .get() as { c: number }).c;
+
+    const learningsPerProject = this.db
+      .prepare(
+        `SELECT p.name AS projectName, COUNT(l.id) AS count
+         FROM projects p
+         LEFT JOIN learnings l ON l.project_dir_name = p.dir_name
+         GROUP BY p.dir_name
+         ORDER BY count DESC`
+      )
+      .all() as Array<{ projectName: string; count: number }>;
+
+    const categoryDistribution = this.db
+      .prepare(
+        `SELECT category, COUNT(*) AS count
+         FROM learnings GROUP BY category ORDER BY count DESC`
+      )
+      .all() as Array<{ category: string; count: number }>;
+
+    return { totalLearnings, duplicateCount, staleProjectCount, learningsPerProject, categoryDistribution };
   }
 
   close(): void {
