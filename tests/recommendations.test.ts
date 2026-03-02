@@ -55,6 +55,10 @@ describe("generateRecommendations", () => {
         inputSummary: "{}",
         isError: i < 4, // First 4 are errors
         timestamp: "T1",
+        durationMs: null,
+        resultSummary: null,
+        inputSizeBytes: 2,
+        resultSizeBytes: 0,
       });
     }
     db.insertToolInvocations(tools);
@@ -79,6 +83,10 @@ describe("generateRecommendations", () => {
         inputSummary: "{}",
         isError: true,
         timestamp: "T1",
+        durationMs: null,
+        resultSummary: null,
+        inputSizeBytes: 2,
+        resultSizeBytes: 0,
       });
     }
     db.insertToolInvocations(tools);

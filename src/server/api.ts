@@ -384,6 +384,30 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // GET /api/sessions/:sessionId/requests — per-request cost breakdown
+    const requestsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/requests$/);
+    if (requestsMatch && method === "GET") {
+      const sessionId = decodeURIComponent(requestsMatch[1]);
+      const requests = db.getSessionApiRequests(sessionId);
+      sendJson(res, { requests });
+      return;
+    }
+
+    // GET /api/analytics/expensive-requests — most expensive individual API requests
+    if (pathname === "/api/analytics/expensive-requests" && method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
+      const requests = db.getMostExpensiveRequests(limit);
+      sendJson(res, { requests });
+      return;
+    }
+
+    // GET /api/analytics/tool-lifecycle — per-tool lifecycle statistics
+    if (pathname === "/api/analytics/tool-lifecycle" && method === "GET") {
+      const stats = db.getToolLifecycleStats();
+      sendJson(res, { stats });
+      return;
+    }
+
     // GET /api/analytics/recommendations — optimization suggestions
     if (pathname === "/api/analytics/recommendations" && method === "GET") {
       const recommendations = generateRecommendations(db);

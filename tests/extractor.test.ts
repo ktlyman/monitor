@@ -688,4 +688,200 @@ describe("LearningExtractor", () => {
       expect(result.messages[0].content).toBeNull();
     });
   });
+
+  // ---- Per-request cost tracking ----
+
+  describe("apiRequests extraction", () => {
+    it("produces apiRequests array with per-request costs", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "2026-02-25T10:00:00Z", uuid: "a-1", parentUuid: null,
+          message: {
+            model: "claude-opus-4-6", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
+            stop_reason: "tool_use",
+            usage: {
+              input_tokens: 5000, output_tokens: 2000,
+              cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+              cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+            },
+          },
+        },
+        {
+          type: "user", timestamp: "2026-02-25T10:00:05Z", uuid: "u-1",
+          message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "file content" }] },
+        },
+        {
+          type: "assistant", timestamp: "2026-02-25T10:00:10Z", uuid: "a-2", parentUuid: "u-1",
+          message: {
+            model: "claude-opus-4-6", content: [{ type: "text", text: "Done" }],
+            stop_reason: "end_turn",
+            usage: {
+              input_tokens: 8000, output_tokens: 3000,
+              cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+              cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+            },
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.apiRequests).toHaveLength(2);
+
+      // First request
+      expect(result.apiRequests[0].requestIndex).toBe(0);
+      expect(result.apiRequests[0].model).toBe("claude-opus-4-6");
+      expect(result.apiRequests[0].inputTokens).toBe(5000);
+      expect(result.apiRequests[0].outputTokens).toBe(2000);
+      expect(result.apiRequests[0].toolUseCount).toBe(1);
+      expect(result.apiRequests[0].stopReason).toBe("tool_use");
+      expect(result.apiRequests[0].estimatedCostUsd).toBeGreaterThan(0);
+
+      // Second request
+      expect(result.apiRequests[1].requestIndex).toBe(1);
+      expect(result.apiRequests[1].stopReason).toBe("end_turn");
+      expect(result.apiRequests[1].toolUseCount).toBe(0);
+
+      // Sum of per-request costs should match session cost
+      const requestCostSum = result.apiRequests.reduce((s, r) => s + r.estimatedCostUsd, 0);
+      expect(requestCostSum).toBeCloseTo(result.analytics.estimatedCostUsd, 3);
+    });
+
+    it("excludes fragment entries from apiRequests", async () => {
+      const sharedUsage = {
+        input_tokens: 5000, output_tokens: 2000,
+        cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+      };
+      const filePath = writeJsonl([
+        {
+          type: "user", timestamp: "T1", uuid: "u-1", parentUuid: null,
+          message: { content: [{ type: "text", text: "Hi" }] },
+        },
+        {
+          type: "assistant", timestamp: "T2", uuid: "a-1", parentUuid: "u-1",
+          message: { model: "claude-opus-4-6", content: [{ type: "thinking", thinking: "hmm" }], usage: sharedUsage },
+        },
+        {
+          type: "assistant", timestamp: "T2", uuid: "a-2", parentUuid: "a-1",
+          message: { model: "claude-opus-4-6", content: [{ type: "text", text: "answer" }], usage: sharedUsage },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // Only 1 apiRequest for the root assistant entry
+      expect(result.apiRequests).toHaveLength(1);
+      expect(result.apiRequests[0].messageUuid).toBe("a-1");
+    });
+  });
+
+  // ---- Tool lifecycle enrichment ----
+
+  describe("tool lifecycle fields", () => {
+    it("captures tool duration from timestamps", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "2026-02-25T10:00:00Z", uuid: "a-1",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "npm test" } }],
+          },
+          usage: {},
+        },
+        {
+          type: "user", timestamp: "2026-02-25T10:00:05Z", uuid: "u-1",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "tests passed" }],
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.toolInvocations).toHaveLength(1);
+      expect(result.toolInvocations[0].durationMs).toBe(5000); // 5 seconds
+    });
+
+    it("captures result summary and sizes", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/src/app.ts" } }],
+          },
+          usage: {},
+        },
+        {
+          type: "user", timestamp: "T2", uuid: "u-1",
+          message: {
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "const x = 42;\nexport default x;" }],
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      const inv = result.toolInvocations[0];
+      expect(inv.resultSummary).toBe("const x = 42;\nexport default x;");
+      expect(inv.resultSizeBytes).toBeGreaterThan(0);
+      expect(inv.inputSizeBytes).toBeGreaterThan(0);
+    });
+
+    it("captures inputSizeBytes from tool input", async () => {
+      const bigInput = "x".repeat(5000);
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_1", name: "Write", input: { content: bigInput } }],
+          },
+          usage: {},
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      // inputSummary is truncated to 2000 chars, but inputSizeBytes captures the original
+      expect(result.toolInvocations[0].inputSummary.length).toBeLessThanOrEqual(2000);
+      expect(result.toolInvocations[0].inputSizeBytes).toBeGreaterThan(5000);
+    });
+
+    it("handles tool_result with array content", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }],
+          },
+          usage: {},
+        },
+        {
+          type: "user", timestamp: "T2", uuid: "u-1",
+          message: {
+            content: [{
+              type: "tool_result", tool_use_id: "toolu_1",
+              content: [{ type: "text", text: "line 1\nline 2" }],
+            }],
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.toolInvocations[0].resultSummary).toBe("line 1\nline 2");
+      expect(result.toolInvocations[0].resultSizeBytes).toBeGreaterThan(0);
+    });
+
+    it("sets null duration when no tool_result is found", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }],
+          },
+          usage: {},
+        },
+        // No subsequent user message with tool_result
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.toolInvocations[0].durationMs).toBeNull();
+      expect(result.toolInvocations[0].resultSummary).toBeNull();
+      expect(result.toolInvocations[0].resultSizeBytes).toBe(0);
+    });
+  });
 });

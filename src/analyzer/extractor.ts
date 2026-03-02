@@ -8,6 +8,7 @@ import type {
   ToolInvocation,
   ThinkingBlock,
   SessionAnalytics,
+  ApiRequest,
   SubagentRun,
 } from "../types/index.js";
 
@@ -16,6 +17,7 @@ export interface DeepExtractionResult {
   messages: SessionMessage[];
   toolInvocations: ToolInvocation[];
   thinkingBlocks: ThinkingBlock[];
+  apiRequests: ApiRequest[];
   analytics: SessionAnalytics;
   parseErrors: number;
 }
@@ -279,8 +281,9 @@ export class LearningExtractor {
     const messages: SessionMessage[] = [];
     const toolInvocations: ToolInvocation[] = [];
     const thinkingBlocks: ThinkingBlock[] = [];
+    const apiRequests: ApiRequest[] = [];
 
-    // Map tool_use IDs to their invocations for error marking
+    // Map tool_use IDs to their invocations for error/lifecycle marking
     const toolMap = new Map<string, ToolInvocation>();
 
     // Analytics accumulators
@@ -364,16 +367,47 @@ export class LearningExtractor {
             totalCacheReadTokens += cacheReadTokens;
             totalCacheWrite5mTokens += cacheWrite5m;
             totalCacheWrite1hTokens += cacheWrite1h;
-            if (entryType === "assistant") apiRequestCount++;
 
-            // Accumulate cost using per-model pricing
+            // Compute per-request cost
             const pricing = getPricing(model);
-            estimatedCostAccum +=
+            const requestCost =
               (inputTokens / 1_000_000) * pricing.input +
               (outputTokens / 1_000_000) * pricing.output +
               (cacheWrite5m / 1_000_000) * pricing.cacheWrite5m +
               (cacheWrite1h / 1_000_000) * pricing.cacheWrite1h +
               (cacheReadTokens / 1_000_000) * pricing.cacheRead;
+            estimatedCostAccum += requestCost;
+
+            if (entryType === "assistant") {
+              // Count tool_use and thinking blocks for this request
+              let reqToolUseCount = 0;
+              let reqThinkingCharCount = 0;
+              for (const block of contentBlocks) {
+                if ((block.type as string) === "tool_use") reqToolUseCount++;
+                if ((block.type as string) === "thinking") {
+                  reqThinkingCharCount += ((block.thinking as string) ?? "").length;
+                }
+              }
+
+              apiRequests.push({
+                sessionId,
+                messageUuid: uuid,
+                requestIndex: apiRequestCount,
+                model: model ?? "",
+                timestamp: ts,
+                inputTokens,
+                outputTokens,
+                cacheCreationTokens,
+                cacheReadTokens,
+                cacheWrite5mTokens: cacheWrite5m,
+                cacheWrite1hTokens: cacheWrite1h,
+                estimatedCostUsd: Math.round(requestCost * 10000) / 10000,
+                stopReason,
+                toolUseCount: reqToolUseCount,
+                thinkingCharCount: reqThinkingCharCount,
+              });
+              apiRequestCount++;
+            }
           }
 
           // Extract message content text
@@ -424,6 +458,10 @@ export class LearningExtractor {
                   inputSummary,
                   isError: false,
                   timestamp: ts,
+                  durationMs: null,
+                  resultSummary: null,
+                  inputSizeBytes: Buffer.byteLength(inputStr, "utf-8"),
+                  resultSizeBytes: 0,
                 };
                 toolInvocations.push(inv);
                 toolMap.set(toolUseId, inv);
@@ -445,15 +483,44 @@ export class LearningExtractor {
             }
           }
 
-          // Extract tool errors from user content (tool_result blocks)
+          // Extract tool results from user content (tool_result blocks)
+          // Captures error status, duration, result summary, and result size.
+          // Duration is from tool_use (assistant msg) to tool_result (user msg).
+          // When multiple tools are called in one round, all share the same
+          // user message timestamp, so duration reflects round-trip time, not
+          // per-tool latency.
           if (entryType === "user") {
             for (const block of contentBlocks) {
-              if (block.type === "tool_result" && block.is_error === true) {
+              if (block.type === "tool_result") {
                 const toolUseId = (block.tool_use_id as string) ?? "";
                 const inv = toolMap.get(toolUseId);
                 if (inv) {
-                  inv.isError = true;
-                  errorCount++;
+                  if (block.is_error === true) {
+                    inv.isError = true;
+                    errorCount++;
+                  }
+
+                  // Duration: user message timestamp - tool_use timestamp
+                  if (ts && inv.timestamp) {
+                    const elapsed = new Date(ts).getTime() - new Date(inv.timestamp).getTime();
+                    if (elapsed >= 0) inv.durationMs = elapsed;
+                  }
+
+                  // Result content extraction
+                  const resultContent = block.content;
+                  let resultStr = "";
+                  if (typeof resultContent === "string") {
+                    resultStr = resultContent;
+                  } else if (Array.isArray(resultContent)) {
+                    resultStr = (resultContent as Record<string, unknown>[])
+                      .filter((b) => b.type === "text")
+                      .map((b) => (b.text as string) ?? "")
+                      .join("\n");
+                  }
+                  if (resultStr) {
+                    inv.resultSizeBytes = Buffer.byteLength(resultStr, "utf-8");
+                    inv.resultSummary = resultStr.slice(0, 2000);
+                  }
                 }
               }
             }
@@ -504,7 +571,7 @@ export class LearningExtractor {
       deepExtractedFileSize: statSync(jsonlPath).size,
     };
 
-    return { messages, toolInvocations, thinkingBlocks, analytics, parseErrors };
+    return { messages, toolInvocations, thinkingBlocks, apiRequests, analytics, parseErrors };
   }
 
   /**

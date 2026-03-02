@@ -3,7 +3,7 @@
 /**
  * MCP server for the Monitor meta-learning system.
  *
- * Exposes 14 tools for querying patterns and learnings across all
+ * Exposes 16 tools for querying patterns and learnings across all
  * Claude Code projects. Runs over stdio using JSON-RPC 2.0.
  *
  * Search tools:
@@ -12,9 +12,9 @@
  *   list_projects, get_project_summary, list_project_files, get_file_content
  * Analytics tools:
  *   get_stats, get_recommendations, get_tool_success_rates,
- *   get_expensive_sessions, get_model_breakdown
+ *   get_expensive_sessions, get_expensive_requests, get_model_breakdown
  * Session tools:
- *   get_session_analytics, get_session_messages
+ *   get_session_analytics, get_session_messages, get_session_requests
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -323,17 +323,23 @@ server.tool(
 // ---- get_tool_success_rates ----
 server.tool(
   "get_tool_success_rates",
-  "Per-tool call counts, error counts, and success rates across all sessions. " +
+  "Per-tool call counts, error counts, success rates, avg duration, and avg I/O sizes. " +
     "Requires deep-extracted sessions. Use get_recommendations for actionable suggestions.",
   {},
   async () => {
     try {
-      const rates = db.getToolSuccessRates();
-      if (rates.length === 0) return emptyResult("tool invocation data", DEEP_HINT);
-      const text = rates
-        .map((r) => `${r.toolName}: ${r.total} calls, ${r.errors} errors (${(r.successRate * 100).toFixed(1)}% success)`)
+      const stats = db.getToolLifecycleStats();
+      if (stats.length === 0) return emptyResult("tool invocation data", DEEP_HINT);
+      const text = stats
+        .map((r) => {
+          const duration = r.avgDurationMs !== null ? ` avg ${Math.round(r.avgDurationMs)}ms` : "";
+          const io = r.avgInputBytes > 0 || r.avgResultBytes > 0
+            ? ` (${Math.round(r.avgInputBytes)}B in, ${Math.round(r.avgResultBytes)}B out)`
+            : "";
+          return `${r.toolName}: ${r.total} calls, ${r.errors} errors (${(r.successRate * 100).toFixed(1)}% success)${duration}${io}`;
+        })
         .join("\n");
-      return textResult(`Tool success rates:\n\n${text}`);
+      return textResult(`Tool lifecycle stats:\n\n${text}`);
     } catch (err) {
       return errorResult("Failed to get tool rates", err);
     }
@@ -455,6 +461,60 @@ server.tool(
       return textResult(`${messages.length} messages:\n\n${text}`);
     } catch (err) {
       return errorResult("Failed to get messages", err);
+    }
+  }
+);
+
+// ---- get_session_requests ----
+server.tool(
+  "get_session_requests",
+  "Per-request cost breakdown for a session: each API request with model, tokens, cost, tool count. " +
+    "Use get_expensive_sessions to find session IDs. Requires deep-extracted sessions.",
+  {
+    session_id: z.string().describe("Session UUID"),
+  },
+  async (params) => {
+    try {
+      const requests = db.getSessionApiRequests(params.session_id);
+      if (requests.length === 0) return emptyResult("API requests", DEEP_HINT);
+      const text = requests
+        .map((r) =>
+          `#${r.requestIndex} ${r.model} $${r.estimatedCostUsd.toFixed(4)} ` +
+          `(${r.inputTokens.toLocaleString()}in/${r.outputTokens.toLocaleString()}out) ` +
+          `${r.toolUseCount} tools, ${r.thinkingCharCount.toLocaleString()} thinking chars ` +
+          `[${r.stopReason ?? "?"}]`
+        )
+        .join("\n");
+      return textResult(`${requests.length} API requests:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get session requests", err);
+    }
+  }
+);
+
+// ---- get_expensive_requests ----
+server.tool(
+  "get_expensive_requests",
+  "Most expensive individual API requests across all sessions. " +
+    "Identifies which single requests consumed the most tokens/cost. " +
+    "Requires deep-extracted sessions.",
+  {
+    limit: z.number().optional().describe("Max results (default 10)"),
+  },
+  async (params) => {
+    try {
+      const requests = db.getMostExpensiveRequests(params.limit ?? 10);
+      if (requests.length === 0) return emptyResult("API requests", DEEP_HINT);
+      const text = requests
+        .map((r) =>
+          `$${r.estimatedCostUsd.toFixed(4)} — ${r.projectName} ${r.model} ` +
+          `(${r.inputTokens.toLocaleString()}in/${r.outputTokens.toLocaleString()}out) ` +
+          `${r.toolUseCount} tools [${r.stopReason ?? "?"}] ${r.timestamp}`
+        )
+        .join("\n");
+      return textResult(`Most expensive requests:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get expensive requests", err);
     }
   }
 );

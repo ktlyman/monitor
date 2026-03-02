@@ -296,6 +296,7 @@
       <div id="toolChart"></div>
       <div id="toolReliability"></div>
       <div id="modelBreakdown"></div>
+      <div id="expensiveRequests"></div>
       <div id="expensiveSessions"></div>
       <div id="projectCoverage"></div>
       <div id="thinkingSearch">
@@ -638,6 +639,7 @@
         // Load extended analytics sections in parallel
         loadToolReliability();
         loadModelBreakdown();
+        loadExpensiveRequests();
         loadExpensiveSessions();
         loadProjectCoverage();
         loadRecommendations();
@@ -651,19 +653,24 @@
 
     async function loadToolReliability() {
       try {
-        var res = await fetch('/api/analytics/tool-success-rates');
+        var res = await fetch('/api/analytics/tool-lifecycle');
         var data = await res.json();
-        if (!data.rates || data.rates.length === 0) return;
-        var rows = data.rates.map(function(r) {
+        var rates = data.stats || data.rates;
+        if (!rates || rates.length === 0) return;
+        var rows = rates.map(function(r) {
           var pct = (r.successRate * 100).toFixed(1);
           var color = r.successRate >= 0.95 ? '#22c55e' : r.successRate >= 0.8 ? '#eab308' : '#ef4444';
+          var dur = r.avgDurationMs != null ? (r.avgDurationMs / 1000).toFixed(1) + 's' : '—';
+          var avgIn = r.avgInputBytes != null ? formatBytes(Math.round(r.avgInputBytes)) : '—';
+          var avgOut = r.avgResultBytes != null ? formatBytes(Math.round(r.avgResultBytes)) : '—';
           return '<tr><td>' + esc(r.toolName) + '</td><td>' + r.total + '</td><td>' + r.errors + '</td>' +
-            '<td><span style="color:' + color + ';font-weight:600">' + pct + '%</span></td></tr>';
+            '<td><span style="color:' + color + ';font-weight:600">' + pct + '%</span></td>' +
+            '<td>' + dur + '</td><td>' + avgIn + '</td><td>' + avgOut + '</td></tr>';
         }).join('');
         document.getElementById('toolReliability').innerHTML =
-          '<div class="bar-chart"><h3>Tool Reliability</h3>' +
+          '<div class="bar-chart"><h3>Tool Lifecycle</h3>' +
           '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
-          '<tr style="color:var(--muted)"><th>Tool</th><th>Total</th><th>Errors</th><th>Success</th></tr>' +
+          '<tr style="color:var(--muted)"><th>Tool</th><th>Total</th><th>Errors</th><th>Success</th><th>Avg Duration</th><th>Avg Input</th><th>Avg Result</th></tr>' +
           rows + '</table></div>';
       } catch { /* ignore */ }
     }
@@ -685,6 +692,26 @@
             '</div>';
         }).join('');
         document.getElementById('modelBreakdown').innerHTML = '<div class="bar-chart"><h3>Models</h3>' + bars + '</div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadExpensiveRequests() {
+      try {
+        var res = await fetch('/api/analytics/expensive-requests?limit=10');
+        var data = await res.json();
+        if (!data.requests || data.requests.length === 0) return;
+        var rows = data.requests.map(function(r, i) {
+          return '<tr><td>' + (i + 1) + '</td><td>' + esc(r.projectName) + '</td><td>' + esc(r.model.replace('claude-', '')) + '</td>' +
+            '<td>' + formatCost(r.estimatedCostUsd) + '</td>' +
+            '<td>' + formatNum(r.inputTokens + r.outputTokens) + '</td>' +
+            '<td>' + r.toolUseCount + '</td>' +
+            '<td>' + formatNum(r.thinkingCharCount) + '</td></tr>';
+        }).join('');
+        document.getElementById('expensiveRequests').innerHTML =
+          '<div class="bar-chart"><h3>Most Expensive API Requests</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>#</th><th>Project</th><th>Model</th><th>Cost</th><th>Tokens</th><th>Tools</th><th>Thinking</th></tr>' +
+          rows + '</table></div>';
       } catch { /* ignore */ }
     }
 
@@ -805,11 +832,12 @@
       container.innerHTML = '<p class="placeholder">Loading session...</p>';
 
       try {
-        var [analyticsRes, toolsRes, thinkingRes, subagentsRes] = await Promise.all([
+        var [analyticsRes, toolsRes, thinkingRes, subagentsRes, requestsRes] = await Promise.all([
           fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/analytics'),
           fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/tools'),
           fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/thinking'),
           fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/subagents'),
+          fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/requests'),
         ]);
 
         var html = '<div class="session-detail">' +
@@ -845,6 +873,27 @@
 
           if (a.models) {
             html += '<div class="detail-section"><h4>Models</h4><p style="font-size:0.85rem;color:var(--muted)">' + esc(a.models) + '</p></div>';
+          }
+        }
+
+        // Per-request breakdown
+        if (requestsRes.ok) {
+          var rData = await requestsRes.json();
+          if (rData.requests && rData.requests.length > 0) {
+            var reqRows = rData.requests.map(function(r) {
+              return '<tr><td>' + r.requestIndex + '</td>' +
+                '<td>' + esc(r.model.replace('claude-', '')) + '</td>' +
+                '<td>' + formatCost(r.estimatedCostUsd) + '</td>' +
+                '<td>' + formatNum(r.inputTokens) + '</td>' +
+                '<td>' + formatNum(r.outputTokens) + '</td>' +
+                '<td>' + r.toolUseCount + '</td>' +
+                '<td>' + (r.stopReason || '—') + '</td></tr>';
+            }).join('');
+            html += '<div class="detail-section"><h4>API Requests (' + rData.requests.length + ')</h4>' +
+              '<div style="max-height:300px;overflow-y:auto">' +
+              '<table style="width:100%;font-size:0.8rem;border-collapse:collapse">' +
+              '<tr style="color:var(--muted)"><th>#</th><th>Model</th><th>Cost</th><th>Input</th><th>Output</th><th>Tools</th><th>Stop</th></tr>' +
+              reqRows + '</table></div></div>';
           }
         }
 

@@ -10,6 +10,7 @@ import type {
   SubagentRun,
   ToolResultFile,
   SessionAnalytics,
+  ApiRequest,
 } from "../src/types/index.js";
 
 describe("MonitorDatabase", () => {
@@ -25,7 +26,7 @@ describe("MonitorDatabase", () => {
 
   // ---- Schema ----
 
-  it("initializes with schema v7", () => {
+  it("initializes with schema v8", () => {
     // Verify all core tables exist by performing simple queries
     expect(() => db.getProjects()).not.toThrow();
     expect(() => db.getStats()).not.toThrow();
@@ -279,6 +280,10 @@ describe("MonitorDatabase", () => {
         inputSummary: '{"file_path":"/src/index.ts"}',
         isError: false,
         timestamp: "2026-02-25T10:00:05.000Z",
+        durationMs: 150,
+        resultSummary: "file contents here",
+        inputSizeBytes: 28,
+        resultSizeBytes: 1024,
       },
       {
         sessionId: "abc-123",
@@ -288,6 +293,10 @@ describe("MonitorDatabase", () => {
         inputSummary: '{"command":"npm test"}',
         isError: true,
         timestamp: "2026-02-25T10:00:06.000Z",
+        durationMs: 5000,
+        resultSummary: "command failed with exit code 1",
+        inputSizeBytes: 22,
+        resultSizeBytes: 32,
       },
     ];
 
@@ -296,15 +305,20 @@ describe("MonitorDatabase", () => {
     expect(retrieved).toHaveLength(2);
     expect(retrieved[0].toolName).toBe("Read");
     expect(retrieved[0].isError).toBe(false);
+    expect(retrieved[0].durationMs).toBe(150);
+    expect(retrieved[0].resultSummary).toBe("file contents here");
+    expect(retrieved[0].inputSizeBytes).toBe(28);
+    expect(retrieved[0].resultSizeBytes).toBe(1024);
     expect(retrieved[1].toolName).toBe("Bash");
     expect(retrieved[1].isError).toBe(true);
+    expect(retrieved[1].durationMs).toBe(5000);
   });
 
   it("filters tool invocations by name", () => {
     db.insertToolInvocations([
-      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z" },
-      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t2", toolName: "Write", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:01Z" },
-      { sessionId: "abc-123", messageUuid: "m2", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:02Z" },
+      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z", durationMs: null, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
+      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t2", toolName: "Write", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:01Z", durationMs: null, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
+      { sessionId: "abc-123", messageUuid: "m2", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:02Z", durationMs: null, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
     ]);
 
     const reads = db.getToolInvocations("abc-123", { toolName: "Read" });
@@ -529,15 +543,22 @@ describe("MonitorDatabase", () => {
   // ---- clearDeepDataForSession ----
 
   it("clears all deep data for a session", () => {
+    // Set up project and session (needed for api_requests foreign key)
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
     // Insert various data
     db.insertSessionMessages([
       { sessionId: "abc-123", uuid: "m1", parentUuid: null, entryType: "user", timestamp: "2026-02-25T10:00:00Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
     ]);
     db.insertToolInvocations([
-      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z" },
+      { sessionId: "abc-123", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z", durationMs: null, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
     ]);
     db.insertThinkingBlocks([
       { sessionId: "abc-123", messageUuid: "m1", content: "test thinking", contentLength: 13, timestamp: "2026-02-25T10:00:00Z" },
+    ]);
+    db.insertApiRequests([
+      { sessionId: "abc-123", messageUuid: "m1", requestIndex: 0, model: "test", timestamp: "2026-02-25T10:00:00Z", inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, estimatedCostUsd: 0.01, stopReason: "end_turn", toolUseCount: 0, thinkingCharCount: 0 },
     ]);
     db.upsertSubagentRun({
       parentSessionId: "abc-123", agentId: "a1", jsonlPath: "/path", prompt: "test",
@@ -561,6 +582,7 @@ describe("MonitorDatabase", () => {
     expect(db.getSessionMessages("abc-123")).toHaveLength(1);
     expect(db.getToolInvocations("abc-123")).toHaveLength(1);
     expect(db.getThinkingBlocks("abc-123")).toHaveLength(1);
+    expect(db.getSessionApiRequests("abc-123")).toHaveLength(1);
     expect(db.getSubagentRuns("abc-123")).toHaveLength(1);
     expect(db.getToolResultFiles("abc-123")).toHaveLength(1);
     expect(db.isSessionDeepExtracted("abc-123")).toBe(true);
@@ -571,6 +593,7 @@ describe("MonitorDatabase", () => {
     expect(db.getSessionMessages("abc-123")).toHaveLength(0);
     expect(db.getToolInvocations("abc-123")).toHaveLength(0);
     expect(db.getThinkingBlocks("abc-123")).toHaveLength(0);
+    expect(db.getSessionApiRequests("abc-123")).toHaveLength(0);
     expect(db.getSubagentRuns("abc-123")).toHaveLength(0);
     expect(db.getToolResultFiles("abc-123")).toHaveLength(0);
     expect(db.isSessionDeepExtracted("abc-123")).toBe(false);
@@ -589,7 +612,7 @@ describe("MonitorDatabase", () => {
       { sessionId: "s1", uuid: "m2", parentUuid: "m1", entryType: "user", timestamp: "2026-02-25T10:00:01Z", model: null, stopReason: null, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, contentBlockCount: 1, cwd: null, gitBranch: null, content: null },
     ]);
     db.insertToolInvocations([
-      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z" },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "2026-02-25T10:00:00Z", durationMs: null, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
     ]);
     db.insertThinkingBlocks([
       { sessionId: "s1", messageUuid: "m1", content: "test", contentLength: 4, timestamp: "2026-02-25T10:00:00Z" },
@@ -647,10 +670,10 @@ describe("MonitorDatabase", () => {
 
   it("computes tool success rates", () => {
     db.insertToolInvocations([
-      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T1" },
-      { sessionId: "s1", messageUuid: "m1", toolUseId: "t2", toolName: "Read", inputSummary: "{}", isError: true, timestamp: "T2" },
-      { sessionId: "s1", messageUuid: "m1", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T3" },
-      { sessionId: "s1", messageUuid: "m1", toolUseId: "t4", toolName: "Bash", inputSummary: "{}", isError: false, timestamp: "T4" },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T1", durationMs: 100, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t2", toolName: "Read", inputSummary: "{}", isError: true, timestamp: "T2", durationMs: 200, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T3", durationMs: 300, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t4", toolName: "Bash", inputSummary: "{}", isError: false, timestamp: "T4", durationMs: null, resultSummary: null, inputSizeBytes: 2, resultSizeBytes: 0 },
     ]);
 
     const rates = db.getToolSuccessRates();
@@ -1017,5 +1040,112 @@ describe("MonitorDatabase", () => {
     // Should not throw even with no FTS entries
     const results = db.searchMessages("anything");
     expect(results).toHaveLength(0);
+  });
+
+  // ---- API requests ----
+
+  it("inserts and retrieves api requests", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    const requests: ApiRequest[] = [
+      {
+        sessionId: "abc-123", messageUuid: "m1", requestIndex: 0,
+        model: "claude-opus-4-6", timestamp: "2026-02-25T10:00:00Z",
+        inputTokens: 5000, outputTokens: 2000,
+        cacheCreationTokens: 500, cacheReadTokens: 1000,
+        cacheWrite5mTokens: 100, cacheWrite1hTokens: 400,
+        estimatedCostUsd: 0.085, stopReason: "tool_use",
+        toolUseCount: 2, thinkingCharCount: 500,
+      },
+      {
+        sessionId: "abc-123", messageUuid: "m2", requestIndex: 1,
+        model: "claude-opus-4-6", timestamp: "2026-02-25T10:01:00Z",
+        inputTokens: 8000, outputTokens: 3000,
+        cacheCreationTokens: 0, cacheReadTokens: 2000,
+        cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+        estimatedCostUsd: 0.116, stopReason: "end_turn",
+        toolUseCount: 0, thinkingCharCount: 1000,
+      },
+      {
+        sessionId: "abc-123", messageUuid: "m3", requestIndex: 2,
+        model: "claude-haiku-4-5-20251001", timestamp: "2026-02-25T10:02:00Z",
+        inputTokens: 1000, outputTokens: 500,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+        estimatedCostUsd: 0.0035, stopReason: "end_turn",
+        toolUseCount: 0, thinkingCharCount: 0,
+      },
+    ];
+
+    db.insertApiRequests(requests);
+    const retrieved = db.getSessionApiRequests("abc-123");
+    expect(retrieved).toHaveLength(3);
+    expect(retrieved[0].requestIndex).toBe(0);
+    expect(retrieved[0].model).toBe("claude-opus-4-6");
+    expect(retrieved[0].estimatedCostUsd).toBe(0.085);
+    expect(retrieved[0].toolUseCount).toBe(2);
+    expect(retrieved[1].requestIndex).toBe(1);
+    expect(retrieved[2].model).toBe("claude-haiku-4-5-20251001");
+  });
+
+  it("returns most expensive requests across sessions", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.upsertSession({ ...testSession, sessionId: "sess-2" });
+
+    db.insertApiRequests([
+      {
+        sessionId: "abc-123", messageUuid: "cheap-1", requestIndex: 0,
+        model: "claude-haiku-4-5-20251001", timestamp: "T1",
+        inputTokens: 100, outputTokens: 50,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+        estimatedCostUsd: 0.001, stopReason: "end_turn",
+        toolUseCount: 0, thinkingCharCount: 0,
+      },
+      {
+        sessionId: "sess-2", messageUuid: "expensive-1", requestIndex: 0,
+        model: "claude-opus-4-6", timestamp: "T1",
+        inputTokens: 100000, outputTokens: 50000,
+        cacheCreationTokens: 0, cacheReadTokens: 0,
+        cacheWrite5mTokens: 0, cacheWrite1hTokens: 0,
+        estimatedCostUsd: 1.75, stopReason: "end_turn",
+        toolUseCount: 5, thinkingCharCount: 2000,
+      },
+    ]);
+
+    const expensive = db.getMostExpensiveRequests(2);
+    expect(expensive).toHaveLength(2);
+    expect(expensive[0].estimatedCostUsd).toBe(1.75);
+    expect(expensive[0].projectName).toBe("testapp");
+    expect(expensive[1].estimatedCostUsd).toBe(0.001);
+  });
+
+  // ---- Tool lifecycle stats ----
+
+  it("computes tool lifecycle stats with duration and I/O sizes", () => {
+    db.insertToolInvocations([
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T1", durationMs: 100, resultSummary: "file data", inputSizeBytes: 50, resultSizeBytes: 500 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t2", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T2", durationMs: 200, resultSummary: "more data", inputSizeBytes: 60, resultSizeBytes: 600 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: true, timestamp: "T3", durationMs: 50, resultSummary: "error", inputSizeBytes: 40, resultSizeBytes: 100 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t4", toolName: "Bash", inputSummary: "{}", isError: false, timestamp: "T4", durationMs: null, resultSummary: null, inputSizeBytes: 30, resultSizeBytes: 0 },
+    ]);
+
+    const stats = db.getToolLifecycleStats();
+    const readStats = stats.find((s) => s.toolName === "Read");
+    expect(readStats).toBeDefined();
+    expect(readStats!.total).toBe(3);
+    expect(readStats!.errors).toBe(1);
+    expect(readStats!.successRate).toBeCloseTo(0.6667, 3);
+    expect(readStats!.avgDurationMs).toBeCloseTo(116.67, 0);
+    expect(readStats!.avgInputBytes).toBe(50);
+    expect(readStats!.avgResultBytes).toBe(400);
+
+    const bashStats = stats.find((s) => s.toolName === "Bash");
+    expect(bashStats).toBeDefined();
+    expect(bashStats!.total).toBe(1);
+    expect(bashStats!.avgDurationMs).toBeNull();
+    expect(bashStats!.avgInputBytes).toBe(30);
   });
 });

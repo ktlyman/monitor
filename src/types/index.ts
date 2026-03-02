@@ -204,6 +204,14 @@ export interface ToolInvocation {
   inputSummary: string;
   isError: boolean;
   timestamp: string;
+  /** Duration from tool_use to tool_result in milliseconds. Null if not computable. */
+  durationMs: number | null;
+  /** Truncated tool_result content (up to 2000 chars). Null if no result. */
+  resultSummary: string | null;
+  /** Byte length of the tool input before truncation. */
+  inputSizeBytes: number;
+  /** Byte length of the tool result content. */
+  resultSizeBytes: number;
 }
 
 /** A thinking block extracted from an assistant message. */
@@ -266,6 +274,30 @@ export interface SessionAnalytics {
   deepExtractedAt: string;
   /** JSONL file size in bytes at time of deep extraction (for incremental refresh). */
   deepExtractedFileSize: number;
+}
+
+/** A single API request extracted from a session. */
+export interface ApiRequest {
+  id?: number;
+  sessionId: string;
+  /** UUID of the root assistant message (non-fragment) */
+  messageUuid: string;
+  /** 0-based index of this request within the session */
+  requestIndex: number;
+  model: string;
+  timestamp: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  estimatedCostUsd: number;
+  stopReason: string | null;
+  /** Number of tool_use blocks in this request's response */
+  toolUseCount: number;
+  /** Number of thinking chars in this request's response */
+  thinkingCharCount: number;
 }
 
 // ---- Scan types ----

@@ -14,12 +14,13 @@ import type {
   SubagentRun,
   ToolResultFile,
   SessionAnalytics,
+  ApiRequest,
   SearchOptions,
   SearchResult,
   SystemStats,
 } from "../types/index.js";
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -272,6 +273,7 @@ export class MonitorDatabase {
       if (currentVersion < 5) this._migrateV5();
       if (currentVersion < 6) this._migrateV6();
       if (currentVersion < 7) this._migrateV7();
+      if (currentVersion < 8) this._migrateV8();
       this.db
         .prepare(
           "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -324,6 +326,10 @@ export class MonitorDatabase {
       inputSummary: r.input_summary as string,
       isError: (r.is_error as number) === 1,
       timestamp: r.timestamp as string,
+      durationMs: (r.duration_ms as number | null) ?? null,
+      resultSummary: (r.result_summary as string | null) ?? null,
+      inputSizeBytes: (r.input_size_bytes as number) ?? 0,
+      resultSizeBytes: (r.result_size_bytes as number) ?? 0,
     };
   }
 
@@ -780,14 +786,16 @@ export class MonitorDatabase {
   insertToolInvocations(invocations: ToolInvocation[]): void {
     const stmt = this.db.prepare(
       `INSERT OR IGNORE INTO tool_invocations
-       (session_id, message_uuid, tool_use_id, tool_name, input_summary, is_error, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+       (session_id, message_uuid, tool_use_id, tool_name, input_summary, is_error, timestamp,
+        duration_ms, result_summary, input_size_bytes, result_size_bytes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const tx = this.db.transaction(() => {
       for (const t of invocations) {
         stmt.run(
           t.sessionId, t.messageUuid, t.toolUseId, t.toolName,
-          t.inputSummary, t.isError ? 1 : 0, t.timestamp
+          t.inputSummary, t.isError ? 1 : 0, t.timestamp,
+          t.durationMs, t.resultSummary, t.inputSizeBytes, t.resultSizeBytes
         );
       }
     });
@@ -918,6 +926,7 @@ export class MonitorDatabase {
       this.db.prepare("DELETE FROM thinking_blocks WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM subagent_runs WHERE parent_session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM tool_result_files WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM api_requests WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM session_analytics WHERE session_id = ?").run(sessionId);
     });
     tx();
@@ -1289,6 +1298,41 @@ export class MonitorDatabase {
     this.db.exec(`ALTER TABLE session_analytics ADD COLUMN deep_extracted_file_size INTEGER NOT NULL DEFAULT 0`);
   }
 
+  private _migrateV8(): void {
+    // Per-request cost table for request-level accounting
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS api_requests (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id            TEXT NOT NULL REFERENCES sessions(session_id),
+        message_uuid          TEXT NOT NULL,
+        request_index         INTEGER NOT NULL,
+        model                 TEXT NOT NULL DEFAULT '',
+        timestamp             TEXT NOT NULL DEFAULT '',
+        input_tokens          INTEGER NOT NULL DEFAULT 0,
+        output_tokens         INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+        cache_write_5m_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
+        estimated_cost_usd    REAL NOT NULL DEFAULT 0,
+        stop_reason           TEXT,
+        tool_use_count        INTEGER NOT NULL DEFAULT 0,
+        thinking_char_count   INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(session_id, message_uuid)
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_requests_session ON api_requests(session_id);
+      CREATE INDEX IF NOT EXISTS idx_api_requests_cost ON api_requests(estimated_cost_usd DESC);
+    `);
+
+    // Tool lifecycle enrichment: duration, result summary, input/result sizes
+    this.db.exec(`
+      ALTER TABLE tool_invocations ADD COLUMN duration_ms INTEGER;
+      ALTER TABLE tool_invocations ADD COLUMN result_summary TEXT;
+      ALTER TABLE tool_invocations ADD COLUMN input_size_bytes INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE tool_invocations ADD COLUMN result_size_bytes INTEGER NOT NULL DEFAULT 0;
+    `);
+  }
+
   // ---- New query methods for analytics & MCP ----
 
   /** Get a project by its human-readable name. */
@@ -1407,6 +1451,111 @@ export class MonitorDatabase {
          ORDER BY totalCostUsd DESC`
       )
       .all() as Array<{ projectName: string; totalCostUsd: number; sessionCount: number; avgCostPerSession: number }>;
+  }
+
+  // ---- API request methods ----
+
+  /** Batch insert API requests in a transaction. */
+  insertApiRequests(requests: ApiRequest[]): void {
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO api_requests
+       (session_id, message_uuid, request_index, model, timestamp,
+        input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+        cache_write_5m_tokens, cache_write_1h_tokens, estimated_cost_usd,
+        stop_reason, tool_use_count, thinking_char_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const tx = this.db.transaction(() => {
+      for (const r of requests) {
+        stmt.run(
+          r.sessionId, r.messageUuid, r.requestIndex, r.model, r.timestamp,
+          r.inputTokens, r.outputTokens, r.cacheCreationTokens, r.cacheReadTokens,
+          r.cacheWrite5mTokens, r.cacheWrite1hTokens, r.estimatedCostUsd,
+          r.stopReason, r.toolUseCount, r.thinkingCharCount
+        );
+      }
+    });
+    tx();
+  }
+
+  /** Get all API requests for a session, ordered by request index. */
+  getSessionApiRequests(sessionId: string): ApiRequest[] {
+    return this.db
+      .prepare(
+        `SELECT id, session_id AS sessionId, message_uuid AS messageUuid,
+                request_index AS requestIndex, model, timestamp,
+                input_tokens AS inputTokens, output_tokens AS outputTokens,
+                cache_creation_tokens AS cacheCreationTokens,
+                cache_read_tokens AS cacheReadTokens,
+                cache_write_5m_tokens AS cacheWrite5mTokens,
+                cache_write_1h_tokens AS cacheWrite1hTokens,
+                estimated_cost_usd AS estimatedCostUsd,
+                stop_reason AS stopReason,
+                tool_use_count AS toolUseCount,
+                thinking_char_count AS thinkingCharCount
+         FROM api_requests WHERE session_id = ?
+         ORDER BY request_index`
+      )
+      .all(sessionId) as ApiRequest[];
+  }
+
+  /** Get most expensive individual API requests across all sessions. */
+  getMostExpensiveRequests(limit = 10): Array<ApiRequest & { projectName: string }> {
+    return this.db
+      .prepare(
+        `SELECT ar.id, ar.session_id AS sessionId, ar.message_uuid AS messageUuid,
+                ar.request_index AS requestIndex, ar.model, ar.timestamp,
+                ar.input_tokens AS inputTokens, ar.output_tokens AS outputTokens,
+                ar.cache_creation_tokens AS cacheCreationTokens,
+                ar.cache_read_tokens AS cacheReadTokens,
+                ar.cache_write_5m_tokens AS cacheWrite5mTokens,
+                ar.cache_write_1h_tokens AS cacheWrite1hTokens,
+                ar.estimated_cost_usd AS estimatedCostUsd,
+                ar.stop_reason AS stopReason,
+                ar.tool_use_count AS toolUseCount,
+                ar.thinking_char_count AS thinkingCharCount,
+                p.name AS projectName
+         FROM api_requests ar
+         JOIN sessions s ON s.session_id = ar.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         ORDER BY ar.estimated_cost_usd DESC
+         LIMIT ?`
+      )
+      .all(limit) as Array<ApiRequest & { projectName: string }>;
+  }
+
+  /** Get per-tool lifecycle statistics (success rate, avg duration, avg I/O sizes). */
+  getToolLifecycleStats(): Array<{
+    toolName: string;
+    total: number;
+    errors: number;
+    successRate: number;
+    avgDurationMs: number | null;
+    avgInputBytes: number;
+    avgResultBytes: number;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT tool_name AS toolName, COUNT(*) AS total,
+                SUM(is_error) AS errors,
+                ROUND(1.0 - (CAST(SUM(is_error) AS REAL) / COUNT(*)), 4) AS successRate,
+                ROUND(AVG(duration_ms)) AS avgDurationMs,
+                ROUND(AVG(input_size_bytes)) AS avgInputBytes,
+                ROUND(AVG(result_size_bytes)) AS avgResultBytes
+         FROM tool_invocations
+         GROUP BY tool_name
+         ORDER BY total DESC
+         LIMIT 30`
+      )
+      .all() as Array<{
+        toolName: string;
+        total: number;
+        errors: number;
+        successRate: number;
+        avgDurationMs: number | null;
+        avgInputBytes: number;
+        avgResultBytes: number;
+      }>;
   }
 
   close(): void {
