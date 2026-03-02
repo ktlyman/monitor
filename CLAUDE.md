@@ -19,9 +19,10 @@ and learnings from AI-assisted development sessions across all projects.
 src/
 ├── types/           Core type definitions
 │   └── index.ts       Project, Session, Learning, ProjectFile, SessionMessage,
-│                       ToolInvocation, ThinkingBlock, SubagentRun, SessionAnalytics
+│                       ToolInvocation, ThinkingBlock, SubagentRun, SessionAnalytics,
+│                       ApiRequest, Plan, Note, Runbook, ToolResultFile, FileVersion
 ├── storage/         SQLite + FTS5 persistence layer
-│   └── database.ts    MonitorDatabase class (schema, migrations, queries, FTS)
+│   └── database.ts    MonitorDatabase class (schema V10, 17 tables, migrations, FTS)
 ├── collector/       Filesystem scanner for ~/.claude/projects/
 │   └── scanner.ts     Discovers projects, sessions, docs (recursive rules/skills/commands)
 ├── analyzer/        Extracts learnings and session analytics
@@ -29,10 +30,10 @@ src/
 │   ├── scan-service.ts Scan orchestration with incremental deep extraction
 │   └── recommendations.ts Rules-based optimization recommendations
 ├── server/          HTTP API + static frontend serving
-│   ├── api.ts         Node.js HTTP server, JSON API, static file serving
+│   ├── api.ts         Node.js HTTP server, ~44 REST endpoints, static file serving
 │   └── redact.ts      Path redaction for API responses (privacy)
 ├── mcp/             MCP server for agent integration
-│   └── server.ts      Stdio-based MCP server exposing query tools
+│   └── server.ts      30 tools, 2 resources, 2 prompts (query, write-back, guidance)
 ├── cli/             CLI entry point (commander-based)
 │   └── index.ts       scan, search, serve, stats subcommands
 └── static/          Frontend SPA
