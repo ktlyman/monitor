@@ -884,4 +884,112 @@ describe("LearningExtractor", () => {
       expect(result.toolInvocations[0].resultSizeBytes).toBe(0);
     });
   });
+
+  describe("plan extraction", () => {
+    it("extracts plans from ExitPlanMode tool invocations", async () => {
+      const planContent = "# Implementation Plan\n\n## Step 1\nDo the thing\n\n## Step 2\nDo the other thing";
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "2026-02-25T10:00:00Z", uuid: "a-1",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_plan1", name: "ExitPlanMode", input: {} },
+            ],
+          },
+          usage: {},
+        },
+        {
+          type: "user", timestamp: "2026-02-25T10:00:05Z", uuid: "u-1",
+          message: {
+            content: [
+              { type: "tool_result", tool_use_id: "toolu_plan1", content: planContent },
+            ],
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.plans).toHaveLength(1);
+      expect(result.plans[0].planContent).toBe(planContent);
+      expect(result.plans[0].contentLength).toBe(planContent.length);
+      expect(result.plans[0].toolUseId).toBe("toolu_plan1");
+      expect(result.plans[0].timestamp).toBe("2026-02-25T10:00:00Z");
+    });
+
+    it("does not extract plans from non-ExitPlanMode tools", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_read1", name: "Read", input: { path: "/test" } },
+            ],
+          },
+          usage: {},
+        },
+        {
+          type: "user", timestamp: "T2", uuid: "u-1",
+          message: {
+            content: [
+              { type: "tool_result", tool_use_id: "toolu_read1", content: "file contents here" },
+            ],
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.plans).toHaveLength(0);
+    });
+
+    it("extracts plan content from array tool_result", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_plan1", name: "ExitPlanMode", input: {} },
+            ],
+          },
+          usage: {},
+        },
+        {
+          type: "user", timestamp: "T2", uuid: "u-1",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu_plan1",
+                content: [
+                  { type: "text", text: "# Plan Part 1\n" },
+                  { type: "text", text: "# Plan Part 2\n" },
+                ],
+              },
+            ],
+          },
+        },
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.plans).toHaveLength(1);
+      expect(result.plans[0].planContent).toBe("# Plan Part 1\n\n# Plan Part 2\n");
+    });
+
+    it("handles ExitPlanMode with no tool_result gracefully", async () => {
+      const filePath = writeJsonl([
+        {
+          type: "assistant", timestamp: "T1", uuid: "a-1",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_plan1", name: "ExitPlanMode", input: {} },
+            ],
+          },
+          usage: {},
+        },
+        // No user message with tool_result follows
+      ]);
+
+      const result = await extractor.extractSessionDeep(filePath, "sess-1");
+      expect(result.plans).toHaveLength(0);
+    });
+  });
 });

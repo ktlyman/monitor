@@ -408,6 +408,62 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // GET /api/sessions/:sessionId/plans — plans for a session
+    const plansMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/plans$/);
+    if (plansMatch && method === "GET") {
+      const sessionId = decodeURIComponent(plansMatch[1]);
+      const plans = db.getSessionPlans(sessionId);
+      sendJson(res, { plans });
+      return;
+    }
+
+    // GET /api/analytics/plans — all plans across all sessions
+    if (pathname === "/api/analytics/plans" && method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+      const plans = db.getAllPlans(limit);
+      sendJson(res, { plans });
+      return;
+    }
+
+    // GET /api/analytics/cross-project-patterns — conventions across 3+ projects
+    if (pathname === "/api/analytics/cross-project-patterns" && method === "GET") {
+      const minProjects = parseInt(url.searchParams.get("min") ?? "3", 10);
+      const patterns = db.getCrossProjectPatterns(minProjects);
+      sendJson(res, { patterns });
+      return;
+    }
+
+    // GET /api/analytics/cost-trends — daily cost time series
+    if (pathname === "/api/analytics/cost-trends" && method === "GET") {
+      const days = parseInt(url.searchParams.get("days") ?? "30", 10);
+      const trends = db.getCostTrends(days);
+      sendJson(res, { trends });
+      return;
+    }
+
+    // GET /api/analytics/tool-sequences — common tool call pairs
+    if (pathname === "/api/analytics/tool-sequences" && method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
+      const sequences = db.getToolSequences(limit);
+      sendJson(res, { sequences });
+      return;
+    }
+
+    // GET /api/analytics/anti-patterns — sessions with high error rates or cost
+    if (pathname === "/api/analytics/anti-patterns" && method === "GET") {
+      const limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
+      const antiPatterns = db.getAntiPatterns(limit);
+      sendJson(res, { antiPatterns });
+      return;
+    }
+
+    // GET /api/analytics/convention-drift — file version changes over time
+    if (pathname === "/api/analytics/convention-drift" && method === "GET") {
+      const drift = db.getConventionDrift();
+      sendJson(res, { drift });
+      return;
+    }
+
     // GET /api/analytics/recommendations — optimization suggestions
     if (pathname === "/api/analytics/recommendations" && method === "GET") {
       const recommendations = generateRecommendations(db);

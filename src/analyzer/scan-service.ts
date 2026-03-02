@@ -156,6 +156,7 @@ export async function runScan(
             db.insertToolInvocations(result.toolInvocations);
             db.insertThinkingBlocks(result.thinkingBlocks);
             db.insertApiRequests(result.apiRequests);
+            db.insertPlans(result.plans);
 
             // Subagents
             const sessionDirs = await scanner.discoverSessionDirectories(project.dirName);

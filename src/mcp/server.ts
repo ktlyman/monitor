@@ -3,7 +3,7 @@
 /**
  * MCP server for the Monitor meta-learning system.
  *
- * Exposes 16 tools for querying patterns and learnings across all
+ * Exposes 22 tools for querying patterns and learnings across all
  * Claude Code projects. Runs over stdio using JSON-RPC 2.0.
  *
  * Search tools:
@@ -12,9 +12,13 @@
  *   list_projects, get_project_summary, list_project_files, get_file_content
  * Analytics tools:
  *   get_stats, get_recommendations, get_tool_success_rates,
- *   get_expensive_sessions, get_expensive_requests, get_model_breakdown
+ *   get_expensive_sessions, get_expensive_requests, get_model_breakdown,
+ *   get_cross_project_patterns, get_cost_trends, get_tool_sequences,
+ *   get_anti_patterns, get_convention_drift
  * Session tools:
  *   get_session_analytics, get_session_messages, get_session_requests
+ * Plan tools:
+ *   get_plans
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -515,6 +519,181 @@ server.tool(
       return textResult(`Most expensive requests:\n\n${text}`);
     } catch (err) {
       return errorResult("Failed to get expensive requests", err);
+    }
+  }
+);
+
+// ---- get_plans ----
+server.tool(
+  "get_plans",
+  "Retrieve implementation plans from ExitPlanMode tool invocations with full content (up to 50K chars). " +
+    "Useful for understanding design decisions, seeing how tasks were planned, and reusing patterns. " +
+    "Pass session_id to get plans for a specific session, or omit for all plans. " +
+    "Requires deep-extracted sessions.",
+  {
+    session_id: z.string().optional().describe("Session UUID (omit for all plans)"),
+    limit: z.number().optional().describe("Max results when listing all plans (default 20)"),
+  },
+  async (params) => {
+    try {
+      if (params.session_id) {
+        const plans = db.getSessionPlans(params.session_id);
+        if (plans.length === 0) return emptyResult("plans", DEEP_HINT);
+        const text = plans
+          .map((p) => `--- Plan (${p.contentLength} chars, ${p.timestamp}) ---\n${p.planContent}`)
+          .join("\n\n");
+        return textResult(`${plans.length} plan(s) in session:\n\n${text}`);
+      }
+      const plans = db.getAllPlans(params.limit ?? 20);
+      if (plans.length === 0) return emptyResult("plans", DEEP_HINT);
+      const text = plans
+        .map((p) =>
+          `[${p.projectName}] ${p.timestamp} (${p.contentLength} chars)\n` +
+          `Session: ${p.sessionId}\n` +
+          `${p.planContent.slice(0, 500)}${p.contentLength > 500 ? "..." : ""}`
+        )
+        .join("\n\n---\n\n");
+      return textResult(`${plans.length} plans:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get plans", err);
+    }
+  }
+);
+
+// ---- get_cross_project_patterns ----
+server.tool(
+  "get_cross_project_patterns",
+  "Discover conventions and patterns that appear across 3+ projects. " +
+    "Useful for identifying universal best practices, common conventions, and shared architecture decisions. " +
+    "Based on learnings extracted from CLAUDE.md, MEMORY.md, and rules files.",
+  {
+    min_projects: z.number().optional().describe("Minimum number of projects sharing the pattern (default 3)"),
+  },
+  async (params) => {
+    try {
+      const patterns = db.getCrossProjectPatterns(params.min_projects ?? 3);
+      if (patterns.length === 0) return emptyResult("cross-project patterns", "Need learnings from 3+ projects.");
+      const text = patterns
+        .map((p) =>
+          `[${p.projectCount} projects: ${p.projects}] (${p.category})\n  ${p.content.slice(0, 300)}`
+        )
+        .join("\n\n");
+      return textResult(`${patterns.length} cross-project patterns:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get patterns", err);
+    }
+  }
+);
+
+// ---- get_cost_trends ----
+server.tool(
+  "get_cost_trends",
+  "Daily cost time series from API request data. Shows cost per day per project. " +
+    "Useful for spotting cost spikes, tracking spend over time, and comparing project costs. " +
+    "Requires deep-extracted sessions with api_requests data.",
+  {
+    days: z.number().optional().describe("Number of days to look back (default 30)"),
+  },
+  async (params) => {
+    try {
+      const trends = db.getCostTrends(params.days ?? 30);
+      if (trends.length === 0) return emptyResult("cost trend data", DEEP_HINT);
+
+      // Group by day for readable output
+      const byDay = new Map<string, Array<{ project: string; cost: number; requests: number }>>();
+      for (const t of trends) {
+        const existing = byDay.get(t.day) ?? [];
+        existing.push({ project: t.projectName, cost: t.dailyCost, requests: t.requestCount });
+        byDay.set(t.day, existing);
+      }
+
+      const lines: string[] = [];
+      for (const [day, entries] of byDay) {
+        const totalCost = entries.reduce((s, e) => s + e.cost, 0);
+        lines.push(`${day} — $${totalCost.toFixed(4)} total`);
+        for (const e of entries) {
+          lines.push(`  ${e.project}: $${e.cost.toFixed(4)} (${e.requests} requests)`);
+        }
+      }
+
+      return textResult(`Cost trends:\n\n${lines.join("\n")}`);
+    } catch (err) {
+      return errorResult("Failed to get cost trends", err);
+    }
+  }
+);
+
+// ---- get_tool_sequences ----
+server.tool(
+  "get_tool_sequences",
+  "Most common consecutive tool call pairs across all sessions. " +
+    "Reveals workflow patterns: e.g., Read→Edit (read-then-modify), Glob→Read (find-then-read). " +
+    "Useful for understanding how tools are typically combined. " +
+    "Requires deep-extracted sessions.",
+  {
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async (params) => {
+    try {
+      const sequences = db.getToolSequences(params.limit ?? 20);
+      if (sequences.length === 0) return emptyResult("tool sequence data", DEEP_HINT);
+      const text = sequences
+        .map((s) => `${s.toolA} → ${s.toolB}: ${s.frequency} times`)
+        .join("\n");
+      return textResult(`Tool sequence patterns:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get tool sequences", err);
+    }
+  }
+);
+
+// ---- get_anti_patterns ----
+server.tool(
+  "get_anti_patterns",
+  "Sessions with high error rates (>3 errors) or unusually high cost (>3x average). " +
+    "Useful for identifying problematic sessions and common failure modes. " +
+    "Requires deep-extracted sessions.",
+  {
+    limit: z.number().optional().describe("Max results (default 20)"),
+  },
+  async (params) => {
+    try {
+      const antiPatterns = db.getAntiPatterns(params.limit ?? 20);
+      if (antiPatterns.length === 0) return textResult("No anti-patterns detected — all sessions look healthy.");
+      const text = antiPatterns
+        .map((a) =>
+          `${a.projectName} — $${a.estimatedCostUsd.toFixed(2)}, ${a.errorCount} errors ` +
+          `(${(a.errorRate * 100).toFixed(1)}% error rate), ${a.totalToolUses} tools, ` +
+          `${Math.round(a.durationSeconds / 60)}min ${a.startedAt}`
+        )
+        .join("\n");
+      return textResult(`${antiPatterns.length} problematic sessions:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get anti-patterns", err);
+    }
+  }
+);
+
+// ---- get_convention_drift ----
+server.tool(
+  "get_convention_drift",
+  "Track how project conventions evolve: CLAUDE.md, rules, and MEMORY.md files that have changed over time. " +
+    "Shows version counts and date ranges. Use get_file_content to see current content " +
+    "or list version history via the API.",
+  {},
+  async () => {
+    try {
+      const drift = db.getConventionDrift();
+      if (drift.length === 0) return textResult("No convention drift detected — all files are single-version.");
+      const text = drift
+        .map((d) =>
+          `${d.projectName} — ${d.relativePath} (${d.fileType})\n` +
+          `  ${d.versionCount} versions, ${d.currentSizeBytes}B, ${d.firstSeen} → ${d.lastSeen}`
+        )
+        .join("\n\n");
+      return textResult(`${drift.length} files with version history:\n\n${text}`);
+    } catch (err) {
+      return errorResult("Failed to get convention drift", err);
     }
   }
 );

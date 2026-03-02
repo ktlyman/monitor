@@ -297,6 +297,12 @@
       <div id="toolReliability"></div>
       <div id="modelBreakdown"></div>
       <div id="expensiveRequests"></div>
+      <div id="costTrends"></div>
+      <div id="toolSequences"></div>
+      <div id="crossProjectPatterns"></div>
+      <div id="antiPatterns"></div>
+      <div id="conventionDrift"></div>
+      <div id="plansOverview"></div>
       <div id="expensiveSessions"></div>
       <div id="projectCoverage"></div>
       <div id="thinkingSearch">
@@ -640,6 +646,12 @@
         loadToolReliability();
         loadModelBreakdown();
         loadExpensiveRequests();
+        loadCostTrends();
+        loadToolSequences();
+        loadCrossProjectPatterns();
+        loadAntiPatterns();
+        loadConventionDrift();
+        loadPlansOverview();
         loadExpensiveSessions();
         loadProjectCoverage();
         loadRecommendations();
@@ -711,6 +723,131 @@
           '<div class="bar-chart"><h3>Most Expensive API Requests</h3>' +
           '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
           '<tr style="color:var(--muted)"><th>#</th><th>Project</th><th>Model</th><th>Cost</th><th>Tokens</th><th>Tools</th><th>Thinking</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadCostTrends() {
+      try {
+        var res = await fetch('/api/analytics/cost-trends?days=30');
+        var data = await res.json();
+        if (!data.trends || data.trends.length === 0) return;
+        // Group by day, show last 14 days max
+        var byDay = {};
+        data.trends.forEach(function(t) {
+          if (!byDay[t.day]) byDay[t.day] = { total: 0, projects: [] };
+          byDay[t.day].total += t.dailyCost;
+          byDay[t.day].projects.push(t.projectName + ': ' + formatCost(t.dailyCost));
+        });
+        var days = Object.keys(byDay).sort().reverse().slice(0, 14);
+        var maxCost = Math.max.apply(null, days.map(function(d) { return byDay[d].total; }));
+        var bars = days.map(function(d) {
+          var pct = Math.max(2, (byDay[d].total / maxCost) * 100);
+          return '<div class="bar-row">' +
+            '<span class="bar-label" title="' + esc(byDay[d].projects.join(', ')) + '">' + d.slice(5) + '</span>' +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:#f59e0b"></div></div>' +
+            '<span class="bar-count">' + formatCost(byDay[d].total) + '</span>' +
+            '</div>';
+        }).join('');
+        document.getElementById('costTrends').innerHTML = '<div class="bar-chart"><h3>Daily Cost (Last 14 Days)</h3>' + bars + '</div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadToolSequences() {
+      try {
+        var res = await fetch('/api/analytics/tool-sequences?limit=10');
+        var data = await res.json();
+        if (!data.sequences || data.sequences.length === 0) return;
+        var maxFreq = data.sequences[0].frequency;
+        var bars = data.sequences.map(function(s) {
+          var pct = Math.max(2, (s.frequency / maxFreq) * 100);
+          var label = s.toolA + ' \u2192 ' + s.toolB;
+          return '<div class="bar-row">' +
+            '<span class="bar-label" title="' + esc(label) + '">' + esc(label) + '</span>' +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%;background:#06b6d4"></div></div>' +
+            '<span class="bar-count">' + formatNum(s.frequency) + '</span>' +
+            '</div>';
+        }).join('');
+        document.getElementById('toolSequences').innerHTML = '<div class="bar-chart"><h3>Tool Call Sequences</h3>' + bars + '</div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadCrossProjectPatterns() {
+      try {
+        var res = await fetch('/api/analytics/cross-project-patterns?min=2');
+        var data = await res.json();
+        if (!data.patterns || data.patterns.length === 0) return;
+        var rows = data.patterns.slice(0, 10).map(function(p) {
+          return '<tr><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(p.content.slice(0, 300)) + '">' +
+            esc(p.content.slice(0, 80)) + '</td>' +
+            '<td>' + esc(p.category) + '</td>' +
+            '<td>' + p.projectCount + '</td>' +
+            '<td>' + esc(p.projects) + '</td></tr>';
+        }).join('');
+        document.getElementById('crossProjectPatterns').innerHTML =
+          '<div class="bar-chart"><h3>Cross-Project Patterns</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>Pattern</th><th>Category</th><th>#</th><th>Projects</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadAntiPatterns() {
+      try {
+        var res = await fetch('/api/analytics/anti-patterns?limit=5');
+        var data = await res.json();
+        if (!data.antiPatterns || data.antiPatterns.length === 0) return;
+        var rows = data.antiPatterns.map(function(a) {
+          return '<tr><td>' + esc(a.projectName) + '</td>' +
+            '<td>' + formatCost(a.estimatedCostUsd) + '</td>' +
+            '<td style="color:#ef4444">' + a.errorCount + ' (' + (a.errorRate * 100).toFixed(0) + '%)</td>' +
+            '<td>' + a.totalToolUses + '</td>' +
+            '<td>' + Math.round(a.durationSeconds / 60) + 'm</td></tr>';
+        }).join('');
+        document.getElementById('antiPatterns').innerHTML =
+          '<div class="bar-chart"><h3>Problematic Sessions</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>Project</th><th>Cost</th><th>Errors</th><th>Tools</th><th>Duration</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadConventionDrift() {
+      try {
+        var res = await fetch('/api/analytics/convention-drift');
+        var data = await res.json();
+        if (!data.drift || data.drift.length === 0) return;
+        var rows = data.drift.slice(0, 10).map(function(d) {
+          return '<tr><td>' + esc(d.projectName) + '</td>' +
+            '<td>' + esc(d.relativePath) + '</td>' +
+            '<td>' + esc(d.fileType) + '</td>' +
+            '<td>' + d.versionCount + '</td>' +
+            '<td>' + formatNum(d.currentSizeBytes) + 'B</td></tr>';
+        }).join('');
+        document.getElementById('conventionDrift').innerHTML =
+          '<div class="bar-chart"><h3>Convention Drift</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>Project</th><th>File</th><th>Type</th><th>Versions</th><th>Size</th></tr>' +
+          rows + '</table></div>';
+      } catch { /* ignore */ }
+    }
+
+    async function loadPlansOverview() {
+      try {
+        var res = await fetch('/api/analytics/plans?limit=10');
+        var data = await res.json();
+        if (!data.plans || data.plans.length === 0) return;
+        var rows = data.plans.map(function(p) {
+          var preview = p.planContent.slice(0, 120).replace(/\n/g, ' ');
+          return '<tr><td>' + esc(p.projectName) + '</td>' +
+            '<td title="' + esc(p.planContent.slice(0, 500)) + '">' + esc(preview) + '</td>' +
+            '<td>' + formatNum(p.contentLength) + '</td>' +
+            '<td>' + esc(p.timestamp.slice(0, 10)) + '</td></tr>';
+        }).join('');
+        document.getElementById('plansOverview').innerHTML =
+          '<div class="bar-chart"><h3>Recent Plans</h3>' +
+          '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
+          '<tr style="color:var(--muted)"><th>Project</th><th>Plan</th><th>Chars</th><th>Date</th></tr>' +
           rows + '</table></div>';
       } catch { /* ignore */ }
     }

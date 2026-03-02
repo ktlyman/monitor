@@ -9,6 +9,7 @@ import type {
   ThinkingBlock,
   SessionAnalytics,
   ApiRequest,
+  Plan,
   SubagentRun,
 } from "../types/index.js";
 
@@ -18,6 +19,7 @@ export interface DeepExtractionResult {
   toolInvocations: ToolInvocation[];
   thinkingBlocks: ThinkingBlock[];
   apiRequests: ApiRequest[];
+  plans: Plan[];
   analytics: SessionAnalytics;
   parseErrors: number;
 }
@@ -61,6 +63,9 @@ function getPricing(model: string | null): ModelPricing {
 
 /** Maximum character length for stored message content. */
 const MAX_MESSAGE_CONTENT_LENGTH = 10_000;
+
+/** Maximum character length for stored plan content. */
+const MAX_PLAN_CONTENT_LENGTH = 50_000;
 
 /** Extract text content from an array of content blocks, truncating to limit. */
 function extractContentText(contentBlocks: Record<string, unknown>[]): string | null {
@@ -282,9 +287,12 @@ export class LearningExtractor {
     const toolInvocations: ToolInvocation[] = [];
     const thinkingBlocks: ThinkingBlock[] = [];
     const apiRequests: ApiRequest[] = [];
+    const plans: Plan[] = [];
 
     // Map tool_use IDs to their invocations for error/lifecycle marking
     const toolMap = new Map<string, ToolInvocation>();
+    // Track ExitPlanMode tool_use IDs for plan content extraction
+    const planToolUseIds = new Set<string>();
 
     // Analytics accumulators
     let totalInputTokens = 0;
@@ -465,6 +473,9 @@ export class LearningExtractor {
                 };
                 toolInvocations.push(inv);
                 toolMap.set(toolUseId, inv);
+                if (toolName === "ExitPlanMode") {
+                  planToolUseIds.add(toolUseId);
+                }
               }
 
               if (blockType === "thinking") {
@@ -521,6 +532,18 @@ export class LearningExtractor {
                     inv.resultSizeBytes = Buffer.byteLength(resultStr, "utf-8");
                     inv.resultSummary = resultStr.slice(0, 2000);
                   }
+
+                  // Extract full plan content from ExitPlanMode results
+                  if (planToolUseIds.has(toolUseId) && resultStr) {
+                    const planText = resultStr.slice(0, MAX_PLAN_CONTENT_LENGTH);
+                    plans.push({
+                      sessionId,
+                      toolUseId,
+                      planContent: planText,
+                      contentLength: resultStr.length,
+                      timestamp: inv.timestamp,
+                    });
+                  }
                 }
               }
             }
@@ -571,7 +594,7 @@ export class LearningExtractor {
       deepExtractedFileSize: statSync(jsonlPath).size,
     };
 
-    return { messages, toolInvocations, thinkingBlocks, apiRequests, analytics, parseErrors };
+    return { messages, toolInvocations, thinkingBlocks, apiRequests, plans, analytics, parseErrors };
   }
 
   /**

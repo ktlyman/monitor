@@ -15,12 +15,13 @@ import type {
   ToolResultFile,
   SessionAnalytics,
   ApiRequest,
+  Plan,
   SearchOptions,
   SearchResult,
   SystemStats,
 } from "../types/index.js";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -274,6 +275,7 @@ export class MonitorDatabase {
       if (currentVersion < 6) this._migrateV6();
       if (currentVersion < 7) this._migrateV7();
       if (currentVersion < 8) this._migrateV8();
+      if (currentVersion < 9) this._migrateV9();
       this.db
         .prepare(
           "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
@@ -927,6 +929,7 @@ export class MonitorDatabase {
       this.db.prepare("DELETE FROM subagent_runs WHERE parent_session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM tool_result_files WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM api_requests WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM plans WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM session_analytics WHERE session_id = ?").run(sessionId);
     });
     tx();
@@ -1298,6 +1301,22 @@ export class MonitorDatabase {
     this.db.exec(`ALTER TABLE session_analytics ADD COLUMN deep_extracted_file_size INTEGER NOT NULL DEFAULT 0`);
   }
 
+  private _migrateV9(): void {
+    // Plans table: full-content plan extraction from ExitPlanMode
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS plans (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id      TEXT NOT NULL,
+        tool_use_id     TEXT NOT NULL,
+        plan_content    TEXT NOT NULL,
+        content_length  INTEGER NOT NULL DEFAULT 0,
+        timestamp       TEXT NOT NULL DEFAULT '',
+        UNIQUE(session_id, tool_use_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_plans_session ON plans(session_id);
+    `);
+  }
+
   private _migrateV8(): void {
     // Per-request cost table for request-level accounting
     this.db.exec(`
@@ -1522,6 +1541,248 @@ export class MonitorDatabase {
          LIMIT ?`
       )
       .all(limit) as Array<ApiRequest & { projectName: string }>;
+  }
+
+  // ---- Plan methods ----
+
+  /** Batch insert plans in a transaction. */
+  insertPlans(plans: Plan[]): void {
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO plans
+       (session_id, tool_use_id, plan_content, content_length, timestamp)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    const tx = this.db.transaction(() => {
+      for (const p of plans) {
+        stmt.run(p.sessionId, p.toolUseId, p.planContent, p.contentLength, p.timestamp);
+      }
+    });
+    tx();
+  }
+
+  /** Get plans for a session. */
+  getSessionPlans(sessionId: string): Plan[] {
+    return this.db
+      .prepare(
+        `SELECT id, session_id AS sessionId, tool_use_id AS toolUseId,
+                plan_content AS planContent, content_length AS contentLength, timestamp
+         FROM plans WHERE session_id = ?
+         ORDER BY timestamp`
+      )
+      .all(sessionId) as Plan[];
+  }
+
+  /** Get all plans across all sessions with project context. */
+  getAllPlans(limit = 50): Array<Plan & { projectName: string; dirName: string }> {
+    return this.db
+      .prepare(
+        `SELECT pl.id, pl.session_id AS sessionId, pl.tool_use_id AS toolUseId,
+                pl.plan_content AS planContent, pl.content_length AS contentLength,
+                pl.timestamp, p.name AS projectName, p.dir_name AS dirName
+         FROM plans pl
+         JOIN sessions s ON s.session_id = pl.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         ORDER BY pl.timestamp DESC
+         LIMIT ?`
+      )
+      .all(limit) as Array<Plan & { projectName: string; dirName: string }>;
+  }
+
+  // ---- Cross-project analytics methods ----
+
+  /** Find learning content appearing across 3+ projects (cross-project conventions). */
+  getCrossProjectPatterns(minProjects = 3): Array<{
+    content: string;
+    category: string;
+    projectCount: number;
+    projects: string;
+  }> {
+    // Use first 100 chars as fingerprint for near-duplicate detection
+    return this.db
+      .prepare(
+        `SELECT content, category,
+                COUNT(DISTINCT project_dir_name) AS projectCount,
+                GROUP_CONCAT(DISTINCT project_name) AS projects
+         FROM learnings
+         GROUP BY SUBSTR(content, 1, 100)
+         HAVING projectCount >= ?
+         ORDER BY projectCount DESC
+         LIMIT 50`
+      )
+      .all(minProjects) as Array<{
+        content: string;
+        category: string;
+        projectCount: number;
+        projects: string;
+      }>;
+  }
+
+  /** Daily cost time series from api_requests (last N days). */
+  getCostTrends(days = 30): Array<{
+    day: string;
+    projectName: string;
+    dirName: string;
+    dailyCost: number;
+    requestCount: number;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT date(ar.timestamp) AS day,
+                p.name AS projectName,
+                p.dir_name AS dirName,
+                ROUND(SUM(ar.estimated_cost_usd), 4) AS dailyCost,
+                COUNT(*) AS requestCount
+         FROM api_requests ar
+         JOIN sessions s ON s.session_id = ar.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         WHERE ar.timestamp >= date('now', '-' || ? || ' days')
+         GROUP BY day, p.dir_name
+         ORDER BY day DESC
+         LIMIT 500`
+      )
+      .all(days) as Array<{
+        day: string;
+        projectName: string;
+        dirName: string;
+        dailyCost: number;
+        requestCount: number;
+      }>;
+  }
+
+  /** Common consecutive tool call pairs (bigrams). */
+  getToolSequences(limit = 20): Array<{
+    toolA: string;
+    toolB: string;
+    frequency: number;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT t1.tool_name AS toolA, t2.tool_name AS toolB, COUNT(*) AS frequency
+         FROM tool_invocations t1
+         JOIN tool_invocations t2
+           ON t1.session_id = t2.session_id
+           AND t2.id = (
+             SELECT MIN(t3.id) FROM tool_invocations t3
+             WHERE t3.session_id = t1.session_id AND t3.id > t1.id
+           )
+         GROUP BY toolA, toolB
+         ORDER BY frequency DESC
+         LIMIT ?`
+      )
+      .all(limit) as Array<{
+        toolA: string;
+        toolB: string;
+        frequency: number;
+      }>;
+  }
+
+  /** Sessions with high error rates or unusually high cost (anti-patterns). */
+  getAntiPatterns(limit = 20): Array<{
+    sessionId: string;
+    projectName: string;
+    estimatedCostUsd: number;
+    errorCount: number;
+    totalToolUses: number;
+    errorRate: number;
+    durationSeconds: number;
+    startedAt: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT sa.session_id AS sessionId,
+                p.name AS projectName,
+                sa.estimated_cost_usd AS estimatedCostUsd,
+                sa.error_count AS errorCount,
+                sa.total_tool_uses AS totalToolUses,
+                ROUND(CAST(sa.error_count AS REAL) / MAX(sa.total_tool_uses, 1), 4) AS errorRate,
+                sa.duration_seconds AS durationSeconds,
+                s.started_at AS startedAt
+         FROM session_analytics sa
+         JOIN sessions s ON s.session_id = sa.session_id
+         JOIN projects p ON p.dir_name = s.project_dir_name
+         WHERE sa.error_count > 3
+            OR sa.estimated_cost_usd > (
+              SELECT AVG(estimated_cost_usd) * 3 FROM session_analytics
+            )
+         ORDER BY sa.error_count DESC, sa.estimated_cost_usd DESC
+         LIMIT ?`
+      )
+      .all(limit) as Array<{
+        sessionId: string;
+        projectName: string;
+        estimatedCostUsd: number;
+        errorCount: number;
+        totalToolUses: number;
+        errorRate: number;
+        durationSeconds: number;
+        startedAt: string;
+      }>;
+  }
+
+  /** Track convention drift: file version history showing changes over time. */
+  getConventionDrift(): Array<{
+    projectName: string;
+    dirName: string;
+    relativePath: string;
+    fileType: string;
+    versionCount: number;
+    firstSeen: string;
+    lastSeen: string;
+    currentSizeBytes: number;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT pf.project_name AS projectName,
+                pf.project_dir_name AS dirName,
+                pf.relative_path AS relativePath,
+                pf.file_type AS fileType,
+                COUNT(pfv.id) AS versionCount,
+                pf.first_seen_at AS firstSeen,
+                pf.last_seen_at AS lastSeen,
+                pf.size_bytes AS currentSizeBytes
+         FROM project_files pf
+         LEFT JOIN project_file_versions pfv ON pfv.project_file_id = pf.id
+         WHERE pf.file_type IN ('claude_md', 'rules', 'memory')
+         GROUP BY pf.id
+         HAVING versionCount > 1
+         ORDER BY versionCount DESC`
+      )
+      .all() as Array<{
+        projectName: string;
+        dirName: string;
+        relativePath: string;
+        fileType: string;
+        versionCount: number;
+        firstSeen: string;
+        lastSeen: string;
+        currentSizeBytes: number;
+      }>;
+  }
+
+  /** Generate a project template: common conventions from projects with 3+ learnings. */
+  getProjectTemplate(): Array<{
+    category: string;
+    content: string;
+    projectCount: number;
+    sourceType: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT category, content, source_type AS sourceType,
+                COUNT(DISTINCT project_dir_name) AS projectCount
+         FROM learnings
+         WHERE category IN ('convention', 'pattern', 'architecture')
+         GROUP BY SUBSTR(content, 1, 100)
+         HAVING projectCount >= 2
+         ORDER BY projectCount DESC, category
+         LIMIT 30`
+      )
+      .all() as Array<{
+        category: string;
+        content: string;
+        projectCount: number;
+        sourceType: string;
+      }>;
   }
 
   /** Get per-tool lifecycle statistics (success rate, avg duration, avg I/O sizes). */

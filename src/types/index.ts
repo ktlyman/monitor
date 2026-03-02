@@ -276,6 +276,17 @@ export interface SessionAnalytics {
   deepExtractedFileSize: number;
 }
 
+/** A plan extracted from an ExitPlanMode tool invocation. */
+export interface Plan {
+  id?: number;
+  sessionId: string;
+  toolUseId: string;
+  /** Full plan content (up to 50,000 chars). */
+  planContent: string;
+  contentLength: number;
+  timestamp: string;
+}
+
 /** A single API request extracted from a session. */
 export interface ApiRequest {
   id?: number;

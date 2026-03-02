@@ -11,6 +11,7 @@ import type {
   ToolResultFile,
   SessionAnalytics,
   ApiRequest,
+  Plan,
 } from "../src/types/index.js";
 
 describe("MonitorDatabase", () => {
@@ -26,7 +27,7 @@ describe("MonitorDatabase", () => {
 
   // ---- Schema ----
 
-  it("initializes with schema v8", () => {
+  it("initializes with schema v9", () => {
     // Verify all core tables exist by performing simple queries
     expect(() => db.getProjects()).not.toThrow();
     expect(() => db.getStats()).not.toThrow();
@@ -566,6 +567,9 @@ describe("MonitorDatabase", () => {
       startedAt: "2026-02-25T10:00:00Z", endedAt: "2026-02-25T10:01:00Z", fileSizeBytes: 100,
     });
     db.upsertToolResultFile({ sessionId: "abc-123", toolUseId: "tr1", content: "result", sizeBytes: 6 });
+    db.insertPlans([
+      { sessionId: "abc-123", toolUseId: "plan1", planContent: "# My Plan", contentLength: 9, timestamp: "2026-02-25T10:00:00Z" },
+    ]);
     db.upsertSessionAnalytics({
       sessionId: "abc-123", totalInputTokens: 100, totalOutputTokens: 50,
       totalCacheCreationTokens: 0, totalCacheReadTokens: 0,
@@ -583,6 +587,7 @@ describe("MonitorDatabase", () => {
     expect(db.getToolInvocations("abc-123")).toHaveLength(1);
     expect(db.getThinkingBlocks("abc-123")).toHaveLength(1);
     expect(db.getSessionApiRequests("abc-123")).toHaveLength(1);
+    expect(db.getSessionPlans("abc-123")).toHaveLength(1);
     expect(db.getSubagentRuns("abc-123")).toHaveLength(1);
     expect(db.getToolResultFiles("abc-123")).toHaveLength(1);
     expect(db.isSessionDeepExtracted("abc-123")).toBe(true);
@@ -594,6 +599,7 @@ describe("MonitorDatabase", () => {
     expect(db.getToolInvocations("abc-123")).toHaveLength(0);
     expect(db.getThinkingBlocks("abc-123")).toHaveLength(0);
     expect(db.getSessionApiRequests("abc-123")).toHaveLength(0);
+    expect(db.getSessionPlans("abc-123")).toHaveLength(0);
     expect(db.getSubagentRuns("abc-123")).toHaveLength(0);
     expect(db.getToolResultFiles("abc-123")).toHaveLength(0);
     expect(db.isSessionDeepExtracted("abc-123")).toBe(false);
@@ -1147,5 +1153,167 @@ describe("MonitorDatabase", () => {
     expect(bashStats!.total).toBe(1);
     expect(bashStats!.avgDurationMs).toBeNull();
     expect(bashStats!.avgInputBytes).toBe(30);
+  });
+
+  // ---- Plans ----
+
+  it("inserts and retrieves plans for a session", () => {
+    const plans: Plan[] = [
+      { sessionId: "s1", toolUseId: "epm-1", planContent: "# Plan A\n\nStep 1: Do stuff", contentLength: 27, timestamp: "2026-02-25T10:00:00Z" },
+      { sessionId: "s1", toolUseId: "epm-2", planContent: "# Plan B\n\nRevised approach", contentLength: 26, timestamp: "2026-02-25T11:00:00Z" },
+    ];
+    db.insertPlans(plans);
+
+    const result = db.getSessionPlans("s1");
+    expect(result).toHaveLength(2);
+    expect(result[0].planContent).toBe("# Plan A\n\nStep 1: Do stuff");
+    expect(result[0].contentLength).toBe(27);
+    expect(result[1].timestamp).toBe("2026-02-25T11:00:00Z");
+
+    // No plans for other sessions
+    expect(db.getSessionPlans("s2")).toHaveLength(0);
+  });
+
+  it("returns all plans with project context", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.insertPlans([
+      { sessionId: "abc-123", toolUseId: "epm-1", planContent: "# Implementation Plan", contentLength: 21, timestamp: "2026-02-25T10:00:00Z" },
+    ]);
+
+    const all = db.getAllPlans(10);
+    expect(all).toHaveLength(1);
+    expect(all[0].projectName).toBe("testapp");
+    expect(all[0].dirName).toBe("-Users-kevin-Projects-testapp");
+    expect(all[0].planContent).toBe("# Implementation Plan");
+  });
+
+  // ---- Cross-project patterns ----
+
+  it("finds cross-project patterns appearing in 2+ projects", () => {
+    db.upsertProject(testProject);
+    db.upsertProject({ ...testProject, dirName: "-Users-kevin-Projects-app2", name: "app2", projectPath: "/Users/kevin/Projects/app2" });
+    db.upsertProject({ ...testProject, dirName: "-Users-kevin-Projects-app3", name: "app3", projectPath: "/Users/kevin/Projects/app3" });
+
+    // Same convention across 3 projects (identical first 100 chars)
+    const sharedContent = "MUST use SQLite with WAL mode and FTS5 for full-text search";
+    db.insertLearning({ projectName: "testapp", projectDirName: "-Users-kevin-Projects-testapp", sourceType: "claude_md", sourcePath: "CLAUDE.md", content: sharedContent, category: "convention", extractedAt: new Date().toISOString() });
+    db.insertLearning({ projectName: "app2", projectDirName: "-Users-kevin-Projects-app2", sourceType: "claude_md", sourcePath: "CLAUDE.md", content: sharedContent, category: "convention", extractedAt: new Date().toISOString() });
+    db.insertLearning({ projectName: "app3", projectDirName: "-Users-kevin-Projects-app3", sourceType: "rules", sourcePath: ".claude/rules/db.md", content: sharedContent, category: "convention", extractedAt: new Date().toISOString() });
+
+    const patterns = db.getCrossProjectPatterns(2);
+    expect(patterns.length).toBeGreaterThanOrEqual(1);
+    const sqlitePattern = patterns.find((p) => p.content.includes("SQLite"));
+    expect(sqlitePattern).toBeDefined();
+    expect(sqlitePattern!.projectCount).toBe(3);
+  });
+
+  // ---- Cost trends ----
+
+  it("returns daily cost trends from api_requests", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+
+    const today = new Date().toISOString().slice(0, 10) + "T12:00:00Z";
+    db.insertApiRequests([
+      { sessionId: "abc-123", messageUuid: "m1", requestIndex: 0, model: "test", timestamp: today, inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, estimatedCostUsd: 0.05, stopReason: "end_turn", toolUseCount: 0, thinkingCharCount: 0 },
+      { sessionId: "abc-123", messageUuid: "m2", requestIndex: 1, model: "test", timestamp: today, inputTokens: 200, outputTokens: 100, cacheCreationTokens: 0, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, estimatedCostUsd: 0.10, stopReason: "end_turn", toolUseCount: 0, thinkingCharCount: 0 },
+    ]);
+
+    const trends = db.getCostTrends(30);
+    expect(trends.length).toBeGreaterThanOrEqual(1);
+    expect(trends[0].projectName).toBe("testapp");
+    expect(trends[0].dailyCost).toBeCloseTo(0.15, 4);
+    expect(trends[0].requestCount).toBe(2);
+  });
+
+  // ---- Tool sequences ----
+
+  it("finds common consecutive tool call pairs", () => {
+    db.insertToolInvocations([
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t1", toolName: "Glob", inputSummary: "{}", isError: false, timestamp: "T1", durationMs: null, resultSummary: null, inputSizeBytes: 10, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m1", toolUseId: "t2", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T2", durationMs: null, resultSummary: null, inputSizeBytes: 10, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m2", toolUseId: "t3", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T3", durationMs: null, resultSummary: null, inputSizeBytes: 10, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m2", toolUseId: "t4", toolName: "Edit", inputSummary: "{}", isError: false, timestamp: "T4", durationMs: null, resultSummary: null, inputSizeBytes: 10, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m3", toolUseId: "t5", toolName: "Glob", inputSummary: "{}", isError: false, timestamp: "T5", durationMs: null, resultSummary: null, inputSizeBytes: 10, resultSizeBytes: 0 },
+      { sessionId: "s1", messageUuid: "m3", toolUseId: "t6", toolName: "Read", inputSummary: "{}", isError: false, timestamp: "T6", durationMs: null, resultSummary: null, inputSizeBytes: 10, resultSizeBytes: 0 },
+    ]);
+
+    const sequences = db.getToolSequences(10);
+    expect(sequences.length).toBeGreaterThanOrEqual(1);
+    // Glob→Read should appear twice
+    const globRead = sequences.find((s) => s.toolA === "Glob" && s.toolB === "Read");
+    expect(globRead).toBeDefined();
+    expect(globRead!.frequency).toBe(2);
+  });
+
+  // ---- Anti-patterns ----
+
+  it("detects sessions with high error rates", () => {
+    db.upsertProject(testProject);
+    db.upsertSession(testSession);
+    db.upsertSessionAnalytics({
+      sessionId: "abc-123", totalInputTokens: 1000, totalOutputTokens: 500,
+      totalCacheCreationTokens: 0, totalCacheReadTokens: 0,
+      totalCacheWrite5mTokens: 0, totalCacheWrite1hTokens: 0,
+      estimatedCostUsd: 0.5,
+      toolBreakdown: { "Read": 10 }, errorCount: 5, totalToolUses: 10,
+      thinkingBlockCount: 0, thinkingCharCount: 0, subagentCount: 0,
+      apiRequestCount: 5, models: "test", durationSeconds: 300,
+      deepExtractedAt: new Date().toISOString(), deepExtractedFileSize: 0,
+    });
+
+    const antiPatterns = db.getAntiPatterns(10);
+    expect(antiPatterns).toHaveLength(1);
+    expect(antiPatterns[0].errorCount).toBe(5);
+    expect(antiPatterns[0].errorRate).toBeCloseTo(0.5, 3);
+    expect(antiPatterns[0].projectName).toBe("testapp");
+  });
+
+  // ---- Convention drift ----
+
+  it("tracks convention drift through file versions", () => {
+    db.upsertProject(testProject);
+
+    // Upsert initial version
+    db.upsertProjectFile({
+      projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
+      fileType: "claude_md",
+      relativePath: "CLAUDE.md",
+      content: "# Version 1",
+    });
+
+    // Upsert changed version (triggers version history)
+    db.upsertProjectFile({
+      projectName: "testapp",
+      projectDirName: "-Users-kevin-Projects-testapp",
+      fileType: "claude_md",
+      relativePath: "CLAUDE.md",
+      content: "# Version 2 with more content",
+    });
+
+    const drift = db.getConventionDrift();
+    expect(drift).toHaveLength(1);
+    expect(drift[0].relativePath).toBe("CLAUDE.md");
+    expect(drift[0].versionCount).toBe(2);
+    expect(drift[0].projectName).toBe("testapp");
+  });
+
+  // ---- Project template ----
+
+  it("generates project template from common conventions", () => {
+    db.upsertProject(testProject);
+    db.upsertProject({ ...testProject, dirName: "-Users-kevin-Projects-app2", name: "app2", projectPath: "/Users/kevin/Projects/app2" });
+
+    const content = "MUST use TypeScript strict mode";
+    db.insertLearning({ projectName: "testapp", projectDirName: "-Users-kevin-Projects-testapp", sourceType: "claude_md", sourcePath: "CLAUDE.md", content, category: "convention", extractedAt: new Date().toISOString() });
+    db.insertLearning({ projectName: "app2", projectDirName: "-Users-kevin-Projects-app2", sourceType: "claude_md", sourcePath: "CLAUDE.md", content, category: "convention", extractedAt: new Date().toISOString() });
+
+    const template = db.getProjectTemplate();
+    expect(template.length).toBeGreaterThanOrEqual(1);
+    const tsPattern = template.find((t) => t.content.includes("TypeScript"));
+    expect(tsPattern).toBeDefined();
+    expect(tsPattern!.projectCount).toBe(2);
   });
 });
